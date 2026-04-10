@@ -1,0 +1,92 @@
+version: "3.9"
+
+services:
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: hrms
+      POSTGRES_USER: hrms
+      POSTGRES_PASSWORD: hrms_dev_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hrms"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=postgres://hrms:hrms_dev_password@db:5432/hrms
+      - REDIS_URL=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=config.settings
+      - DEBUG=1
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "
+        python manage.py migrate --noinput &&
+        python manage.py seed_departments 2>/dev/null || true &&
+        python manage.py seed_designations 2>/dev/null || true &&
+        python manage.py import_employees 2>/dev/null || true &&
+        python manage.py seed_company_config 2>/dev/null || true &&
+        python manage.py seed_leave_types 2>/dev/null || true &&
+        python manage.py bulk_credit_leaves --year 2026 2>/dev/null || true &&
+        python manage.py seed_onboarding_templates 2>/dev/null || true &&
+        echo '=== HRMS API ready on :8000 ===' &&
+        python manage.py runserver 0.0.0.0:8000
+      "
+
+  celery:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=postgres://hrms:hrms_dev_password@db:5432/hrms
+      - REDIS_URL=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=config.settings
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A config worker -l info
+
+  slack:
+    build:
+      context: ./slack_connector
+      dockerfile: Dockerfile
+    environment:
+      - HRMS_API_URL=http://api:8000
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  pgdata:

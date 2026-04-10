@@ -1,0 +1,73 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# Django
+db.sqlite3
+db.sqlite3-journal
+*.log
+media/
+staticfiles/
+
+# Environment & secrets
+.env
+test_config.py
+*.key
+*.pem
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Docker
+pgdata/
+
+# Test & build artifacts
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+
+# Task files (build instructions, not source code)
+01-project-setup.md
+02-employee-app.md
+03-leave-models.md
+04-leave-services.md
+05-leave-engine.md
+06-tools-and-api.md
+07-notifications.md
+08-seed-data.md
+09-tests.md
+10-chatbot-test.md
+
+# Spec / design docs
+CLAUDE.md
+leave-module-complete-spec.md
+leave-module-features.md
+test-case-specification.md
+
+# Data files (imported into DB, not needed in repo)
+*.xlsx
+*.pptx
+*.pdf
+
+# Notifications log
+notifications.log
+
+# Node (if any)
+node_modules/

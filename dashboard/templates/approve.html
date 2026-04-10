@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manager Approvals — Gamyam HRMS</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f5f6f8;color:#1a1a2e;min-height:100vh}
+
+/* Top bar */
+.topbar{background:#fff;border-bottom:1px solid #e2e5ea;padding:14px 20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;position:sticky;top:0;z-index:10}
+.topbar h1{font-size:18px;font-weight:700;color:#1a1a2e;white-space:nowrap}
+.topbar select{padding:8px 12px;border:1px solid #d0d4db;border-radius:8px;font-size:14px;background:#fff;min-width:260px;cursor:pointer}
+.topbar select:focus{outline:none;border-color:#4361ee;box-shadow:0 0 0 3px rgba(67,97,238,.15)}
+.badge{display:inline-flex;align-items:center;justify-content:center;background:#4361ee;color:#fff;font-size:13px;font-weight:600;border-radius:20px;padding:2px 10px;min-width:24px}
+.badge.zero{background:#94a3b8}
+
+/* Main */
+.main{max-width:640px;margin:0 auto;padding:24px 16px 80px}
+
+/* Cards */
+.card{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);padding:18px;margin-bottom:14px;transition:all .3s ease;opacity:1;max-height:600px;overflow:hidden}
+.card.removing{opacity:0;max-height:0;padding:0 18px;margin-bottom:0}
+.card-header{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.card-header .emp-name{font-weight:600;font-size:15px}
+.card-header .emp-id{color:#64748b;font-size:13px}
+.pill{display:inline-block;padding:2px 10px;border-radius:20px;font-size:12px;font-weight:600;color:#fff}
+.pill-SL{background:#ef4444}.pill-PL{background:#3b82f6}.pill-EL{background:#22c55e}
+.pill-WFH{background:#8b5cf6}.pill-LOP{background:#f97316}.pill-BL{background:#6b7280}
+.pill-ML{background:#ec4899}.pill-PtL{background:#06b6d4}.pill-OH{background:#eab308;color:#1a1a2e}
+.card-dates{font-size:14px;color:#334155;margin-bottom:6px}
+.card-dates strong{color:#1a1a2e}
+.card-duration{font-size:13px;color:#64748b;margin-bottom:8px}
+.card-reason{font-size:13px;color:#475569;background:#f8fafc;padding:8px 12px;border-radius:8px;margin-bottom:10px;line-height:1.5;word-break:break-word}
+.card-time{font-size:12px;color:#94a3b8;margin-bottom:12px}
+.card-actions{display:flex;gap:10px}
+
+/* Buttons */
+.btn{padding:8px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;border:2px solid transparent;transition:all .15s}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn-approve{background:#22c55e;color:#fff;border-color:#22c55e}
+.btn-approve:hover:not(:disabled){background:#16a34a;border-color:#16a34a}
+.btn-reject{background:#fff;color:#ef4444;border-color:#ef4444}
+.btn-reject:hover:not(:disabled){background:#fef2f2}
+
+/* Reject input */
+.reject-box{display:none;margin-top:10px}
+.reject-box.open{display:flex;gap:8px;align-items:start}
+.reject-box textarea{flex:1;padding:8px;border:1px solid #d0d4db;border-radius:8px;font-size:13px;resize:vertical;min-height:40px;font-family:inherit}
+.reject-box textarea:focus{outline:none;border-color:#ef4444}
+.reject-box .btn{padding:8px 14px;font-size:13px}
+
+/* Empty state */
+.empty{text-align:center;padding:80px 20px;color:#94a3b8}
+.empty .icon{font-size:56px;margin-bottom:16px;animation:bounce 2s infinite}
+.empty p{font-size:18px;font-weight:500}
+.empty .sub{font-size:14px;margin-top:6px;color:#cbd5e1}
+@keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+
+/* Toast */
+.toast-container{position:fixed;bottom:20px;right:20px;z-index:100;display:flex;flex-direction:column;gap:8px}
+.toast{padding:12px 20px;border-radius:10px;color:#fff;font-size:14px;font-weight:500;box-shadow:0 4px 12px rgba(0,0,0,.15);animation:slideIn .3s ease;max-width:360px}
+.toast.success{background:#22c55e}
+.toast.error{background:#ef4444}
+.toast.removing{animation:slideOut .3s ease forwards}
+@keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
+@keyframes slideOut{from{transform:translateX(0);opacity:1}to{transform:translateX(100%);opacity:0}}
+
+/* Loading */
+.loading{text-align:center;padding:40px;color:#94a3b8;font-size:14px}
+
+/* Select prompt */
+.select-prompt{text-align:center;padding:60px 20px;color:#94a3b8}
+.select-prompt .icon{font-size:40px;margin-bottom:12px}
+.select-prompt p{font-size:16px}
+
+/* Responsive */
+@media(max-width:480px){
+  .topbar{padding:12px 14px}
+  .topbar select{min-width:100%;order:3}
+  .main{padding:16px 10px 80px}
+  .card-actions{flex-direction:column}
+  .btn{width:100%;text-align:center}
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>Approvals</h1>
+  <select id="managerSelect" onchange="onManagerChange()">
+    <option value="">Select manager...</option>
+  </select>
+  <span class="badge zero" id="pendingBadge">0</span>
+</div>
+
+<div class="main" id="content">
+  <div class="select-prompt">
+    <div class="icon">👆</div>
+    <p>Select a manager to view pending requests</p>
+  </div>
+</div>
+
+<div class="toast-container" id="toasts"></div>
+
+<script>
+const API = window.location.origin + '/dashboard/api';
+let currentManager = '';
+let pollTimer = null;
+
+// ── Init ──
+async function init() {
+  try {
+    const resp = await fetch(API + '/managers/');
+    const data = await resp.json();
+    const sel = document.getElementById('managerSelect');
+    data.managers.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m.employee_id;
+      opt.textContent = `${m.full_name} (${m.employee_id}) — ${m.report_count} reports`;
+      sel.appendChild(opt);
+    });
+  } catch(e) {
+    toast('Failed to load managers: ' + e.message, 'error');
+  }
+}
+
+function onManagerChange() {
+  const sel = document.getElementById('managerSelect');
+  currentManager = sel.value;
+  if (pollTimer) clearInterval(pollTimer);
+  if (!currentManager) {
+    document.getElementById('content').innerHTML = `
+      <div class="select-prompt"><div class="icon">👆</div><p>Select a manager to view pending requests</p></div>`;
+    updateBadge(0);
+    return;
+  }
+  loadPending();
+  pollTimer = setInterval(loadPending, 10000);
+}
+
+// ── Load pending ──
+async function loadPending() {
+  if (!currentManager) return;
+  try {
+    const resp = await fetch(API + '/pending/' + currentManager + '/');
+    const data = await resp.json();
+    updateBadge(data.count);
+    renderCards(data.pending);
+  } catch(e) {
+    document.getElementById('content').innerHTML = `<div class="loading">Error loading requests</div>`;
+  }
+}
+
+function updateBadge(n) {
+  const b = document.getElementById('pendingBadge');
+  b.textContent = n;
+  b.className = n > 0 ? 'badge' : 'badge zero';
+}
+
+// ── Render ──
+function renderCards(items) {
+  const el = document.getElementById('content');
+  if (!items.length) {
+    el.innerHTML = `
+      <div class="empty">
+        <div class="icon">🎉</div>
+        <p>No pending requests</p>
+        <div class="sub">All caught up! Checking every 10 seconds...</div>
+      </div>`;
+    return;
+  }
+  el.innerHTML = items.map(r => cardHTML(r)).join('');
+}
+
+function cardHTML(r) {
+  const pill = `<span class="pill pill-${r.leave_type_code}">${r.leave_type_code}</span>`;
+  const dur = r.is_half_day
+    ? `0.5 day (${r.half_day_period})`
+    : `${parseFloat(r.duration_days)} day${parseFloat(r.duration_days)!==1?'s':''}`;
+  const dates = r.start_date === r.end_date
+    ? formatDate(r.start_date)
+    : `${formatDate(r.start_date)} → ${formatDate(r.end_date)}`;
+  const ago = timeAgo(r.applied_at);
+
+  return `
+  <div class="card" id="card-${r.id}">
+    <div class="card-header">
+      ${pill}
+      <span class="emp-name">${esc(r.employee)}</span>
+      <span class="emp-id">${esc(r.employee_id)}</span>
+    </div>
+    <div class="card-dates"><strong>${dates}</strong> &middot; ${dur}</div>
+    <div class="card-reason">${esc(r.reason)}</div>
+    <div class="card-time">Applied ${ago}</div>
+    <div class="card-actions">
+      <button class="btn btn-approve" onclick="doApprove(${r.id})" id="btn-approve-${r.id}">✓ Approve</button>
+      <button class="btn btn-reject" onclick="toggleReject(${r.id})" id="btn-reject-${r.id}">✗ Reject</button>
+    </div>
+    <div class="reject-box" id="reject-box-${r.id}">
+      <textarea id="reject-remarks-${r.id}" placeholder="Reason for rejection..."></textarea>
+      <button class="btn btn-reject" onclick="doReject(${r.id})">Send</button>
+    </div>
+  </div>`;
+}
+
+// ── Actions ──
+async function doApprove(id) {
+  const btn = document.getElementById('btn-approve-' + id);
+  btn.disabled = true;
+  btn.textContent = '...';
+  try {
+    const resp = await fetch(API + '/requests/' + id + '/approve/', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({approver_id: currentManager, remarks: 'Approved via manager screen'})
+    });
+    const data = await resp.json();
+    if (data.error) { toast(data.error, 'error'); btn.disabled = false; btn.textContent = '✓ Approve'; return; }
+    removeCard(id);
+    toast(data.message, 'success');
+    updateBadge(Math.max(0, parseInt(document.getElementById('pendingBadge').textContent) - 1));
+  } catch(e) {
+    toast('Network error', 'error');
+    btn.disabled = false; btn.textContent = '✓ Approve';
+  }
+}
+
+function toggleReject(id) {
+  const box = document.getElementById('reject-box-' + id);
+  box.classList.toggle('open');
+  if (box.classList.contains('open')) {
+    box.querySelector('textarea').focus();
+  }
+}
+
+async function doReject(id) {
+  const remarks = document.getElementById('reject-remarks-' + id).value.trim();
+  if (!remarks) { toast('Please enter a reason for rejection', 'error'); return; }
+  try {
+    const resp = await fetch(API + '/requests/' + id + '/reject/', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({approver_id: currentManager, remarks: remarks})
+    });
+    const data = await resp.json();
+    if (data.error) { toast(data.error, 'error'); return; }
+    removeCard(id);
+    toast(data.message, 'success');
+    updateBadge(Math.max(0, parseInt(document.getElementById('pendingBadge').textContent) - 1));
+  } catch(e) {
+    toast('Network error', 'error');
+  }
+}
+
+function removeCard(id) {
+  const card = document.getElementById('card-' + id);
+  if (card) {
+    card.classList.add('removing');
+    setTimeout(() => {
+      card.remove();
+      if (!document.querySelector('.card')) {
+        document.getElementById('content').innerHTML = `
+          <div class="empty"><div class="icon">🎉</div><p>No pending requests</p>
+          <div class="sub">All caught up! Checking every 10 seconds...</div></div>`;
+      }
+    }, 350);
+  }
+}
+
+// ── Toast ──
+function toast(msg, type) {
+  const c = document.getElementById('toasts');
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => { t.classList.add('removing'); setTimeout(() => t.remove(), 300); }, 3000);
+}
+
+// ── Helpers ──
+function formatDate(s) {
+  if (!s) return '';
+  const d = new Date(s + 'T00:00:00');
+  return d.toLocaleDateString('en-IN', {weekday:'short', day:'numeric', month:'short'});
+}
+
+function timeAgo(iso) {
+  if (!iso) return '';
+  const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return Math.floor(diff/60) + ' min ago';
+  if (diff < 86400) return Math.floor(diff/3600) + ' hr ago';
+  return Math.floor(diff/86400) + ' day(s) ago';
+}
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s || '';
+  return d.innerHTML;
+}
+
+init();
+</script>
+</body>
+</html>
