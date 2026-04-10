@@ -24,6 +24,8 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
 
 
 class LeaveBalanceSerializer(serializers.ModelSerializer):
+    employee_code = serializers.CharField(source='employee.employee_id', read_only=True)
+    employee_name = serializers.CharField(source='employee.full_name', read_only=True)
     leave_type_code = serializers.CharField(source='leave_type.code', read_only=True)
     leave_type_name = serializers.CharField(source='leave_type.name', read_only=True)
     available = serializers.DecimalField(max_digits=6, decimal_places=1, read_only=True)

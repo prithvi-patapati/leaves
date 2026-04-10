@@ -73,6 +73,97 @@ def hrms_get_employee(employee_id):
     return None
 
 
+def hrms_get_all_employees():
+    try:
+        resp = requests.get(f'{HRMS_API_URL}/api/v1/employees/', timeout=10)
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception:
+        pass
+    return []
+
+
+def _normalize(s):
+    return re.sub(r'[^a-z0-9]', '', s.lower())
+
+
+def resolve_employee_input(text):
+    """Resolve flexible input to (employee_id, error_message).
+
+    Accepts: GIT-001, 001, 1, Prithvi, prithvi, pritvi (typo), etc.
+    Returns: (employee_id, None) on match, (None, suggestion_message) on failure.
+    """
+    raw = text.strip().strip('`').strip()
+    if not raw:
+        return None, "Please provide an employee ID or name."
+
+    # Try exact ID match first (e.g., GIT-001)
+    candidate = raw.upper().replace(' ', '')
+    emp = hrms_get_employee(candidate)
+    if emp:
+        return emp['employee_id'], None
+
+    # Try with GIT- prefix if they typed just a number (e.g., 1, 01, 001, 23)
+    digits = re.sub(r'[^0-9]', '', raw)
+    if digits:
+        padded = f"GIT-{digits.zfill(3)}"
+        emp = hrms_get_employee(padded)
+        if emp:
+            return emp['employee_id'], None
+
+    # Load all employees for name/fuzzy matching
+    all_emps = hrms_get_all_employees()
+    if not all_emps:
+        return None, f"Could not find `{raw}` and employee list is unavailable."
+
+    query = _normalize(raw)
+
+    # Exact name match (case-insensitive)
+    for e in all_emps:
+        if _normalize(e.get('full_name', '')) == query:
+            return e['employee_id'], None
+        # Match on first name
+        first = e.get('full_name', '').split()[0] if e.get('full_name') else ''
+        if first and _normalize(first) == query:
+            return e['employee_id'], None
+
+    # Substring match
+    substring_matches = []
+    for e in all_emps:
+        name_norm = _normalize(e.get('full_name', ''))
+        if query in name_norm or name_norm in query:
+            substring_matches.append(e)
+    if len(substring_matches) == 1:
+        return substring_matches[0]['employee_id'], None
+    if len(substring_matches) > 1:
+        options = "\n".join(f"• `{e['employee_id']}` — {e.get('full_name', '')}" for e in substring_matches[:8])
+        return None, f"Multiple matches for *{raw}*:\n{options}\n\nPlease use the ID to be specific."
+
+    # Fuzzy match: find names that share enough characters (handle typos)
+    def similarity(a, b):
+        common = sum(1 for c in set(a) if c in b)
+        return (2.0 * common) / (len(set(a)) + len(set(b))) if a and b else 0
+
+    scored = []
+    for e in all_emps:
+        name = e.get('full_name', '')
+        # Check against full name and first name
+        full_sim = similarity(query, _normalize(name))
+        first_name = name.split()[0] if name else ''
+        first_sim = similarity(query, _normalize(first_name))
+        best = max(full_sim, first_sim)
+        if best > 0.5:
+            scored.append((best, e))
+
+    scored.sort(key=lambda x: -x[0])
+
+    if scored:
+        suggestions = "\n".join(f"• `{e['employee_id']}` — {e.get('full_name', '')}" for _, e in scored[:5])
+        return None, f"Couldn't find *{raw}*. Did you mean:\n{suggestions}"
+
+    return None, f"No employee found matching `{raw}`. Try an ID like `GIT-001` or a name like `Prithvi`."
+
+
 # ── System Prompts ──
 
 def build_system_prompt(role, emp):
@@ -124,11 +215,16 @@ def get_session(uid):
     return sessions[uid]
 
 
-def set_role(uid, employee_id, role):
+def set_role(uid, text_input, role):
     session = get_session(uid)
+
+    employee_id, err = resolve_employee_input(text_input)
+    if err:
+        return err
+
     emp = hrms_get_employee(employee_id)
     if not emp:
-        return f"Could not find employee `{employee_id}`. Check the ID and ensure the API is running at `{HRMS_API_URL}`."
+        return f"Could not find employee `{employee_id}`."
 
     tools = hrms_get_tools(role)
     if not tools:
@@ -202,18 +298,16 @@ def cmd_employee(ack, command, say):
     ack()
     text = command.get('text', '').strip()
     if not text:
-        say("Usage: `/employee GIT-001`\n\nIDs: `GIT-001` Prithvi, `GIT-002` Meena, "
-            "`GIT-020` Rohit, `GIT-053` Akshay (probation)")
+        say("Usage: `/employee <id or name>`\n\nExamples: `/employee 1`, `/employee Prithvi`, `/employee GIT-001`")
         return
-    say(set_role(command['user_id'], text.upper(), 'EMPLOYEE'))
+    say(set_role(command['user_id'], text, 'EMPLOYEE'))
 
 
 @app.command("/hr")
 def cmd_hr(ack, command, say):
     ack()
     text = command.get('text', '').strip()
-    emp_id = text.upper() if text else 'GIT-046'
-    say(set_role(command['user_id'], emp_id, 'ADMIN'))
+    say(set_role(command['user_id'], text or 'GIT-046', 'ADMIN'))
 
 
 @app.command("/manager")
@@ -221,10 +315,9 @@ def cmd_manager(ack, command, say):
     ack()
     text = command.get('text', '').strip()
     if not text:
-        say("Usage: `/manager GIT-023`\n\nIDs: `GIT-023` Chandrakala (47 reports), "
-            "`GIT-008` Dinesh, `GIT-046` Bhavishya")
+        say("Usage: `/manager <id or name>`\n\nExamples: `/manager 23`, `/manager Chandrakala`, `/manager GIT-023`")
         return
-    say(set_role(command['user_id'], text.upper(), 'MANAGER'))
+    say(set_role(command['user_id'], text, 'MANAGER'))
 
 
 @app.command("/whoami")
