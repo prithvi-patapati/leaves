@@ -1,11 +1,11 @@
 EMPLOYEE_TOOLS = [
     {
         "name": "apply_leave",
-        "description": "Apply for leave.",
+        "description": "Apply for leave. Use leave type CODE (not name): SL=Sick Leave, PL=Planned/Casual Leave, EL=Earned Leave, LOP=Loss of Pay, WFH=Work From Home, BL=Bereavement Leave, ML=Maternity Leave, PtL=Paternity Leave, OH=Optional Holiday.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "leave_type": {"type": "string"},
+                "leave_type": {"type": "string", "description": "Leave type code: SL, PL, EL, LOP, WFH, BL, ML, PtL, OH"},
                 "start_date": {"type": "string", "format": "date"},
                 "end_date": {"type": "string", "format": "date"},
                 "reason": {"type": "string"},
@@ -32,7 +32,7 @@ EMPLOYEE_TOOLS = [
     },
     {
         "name": "get_my_balance",
-        "description": "Get current leave balance for the employee.",
+        "description": "Get current leave balance for the employee. Returns entitled, used, pending, available days per leave type.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -60,11 +60,11 @@ EMPLOYEE_TOOLS = [
     },
     {
         "name": "validate_leave",
-        "description": "Dry-run validation of a leave request.",
+        "description": "Dry-run validation of a leave request. Always call this before apply_leave. Use leave type CODE: SL, PL, EL, LOP, WFH, BL, ML, PtL, OH.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "leave_type": {"type": "string"},
+                "leave_type": {"type": "string", "description": "Leave type code: SL, PL, EL, LOP, WFH, BL, ML, PtL, OH"},
                 "start_date": {"type": "string", "format": "date"},
                 "end_date": {"type": "string", "format": "date"},
                 "is_half_day": {"type": "boolean"},

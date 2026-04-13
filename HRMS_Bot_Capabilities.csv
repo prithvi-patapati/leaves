@@ -1,0 +1,58 @@
+Role,Category,Capability
+Employee,Leave Balance,Check total leave balance for the year
+Employee,Leave Balance,Check balance for a specific leave type
+Employee,Leave Balance,Check balance for a different year
+Employee,Leave Requests,View all my leave requests
+Employee,Leave Requests,Filter requests by status
+Employee,Leave Requests,Apply for any configured leave type as per the policy
+Employee,Leave Requests,Apply for half-day leave where allowed as per the policy
+Employee,Leave Requests,Cancel a pending leave request
+Employee,Leave Requests,Cancel an approved leave request (balance gets reversed)
+Employee,Policy,View all leave types and their rules
+Employee,Policy,Ask about specific policy details
+Employee,Optional Holidays,View available optional holidays for the year
+Employee,Optional Holidays,Select an optional holiday
+Manager,Team Leave Requests,View team requests filtered by status
+Manager,Team Leave Requests,Approve a team member's leave request
+Manager,Team Leave Requests,Approve multiple requests at once
+Manager,Team Leave Requests,Reject a request with a reason
+Manager,Team Overview,View all direct reports' leave balances
+Manager,Team Overview,Check team leave calendar for any date range
+Manager,Optional Holidays,Approve a team member's optional holiday selection
+HR Admin,Leave Policy Management,Create a new leave type with configurable rules
+HR Admin,Leave Policy Management,Update an existing leave type prospectively or retroactively
+HR Admin,Leave Policy Management,Deactivate a leave type
+HR Admin,Employee Overrides,Block leave application for a specific employee
+HR Admin,Employee Overrides,Block leave accrual for a specific employee
+HR Admin,Employee Overrides,Block approval for a specific employee's pending requests
+HR Admin,Employee Overrides,Override entitlement days for a specific employee
+HR Admin,Employee Overrides,Waive policy restrictions for a specific employee
+HR Admin,Employee Overrides,Set custom approval chain for a specific employee
+HR Admin,Employee Overrides,Set time-bounded overrides with effective dates
+HR Admin,Employee Overrides,Remove an override
+HR Admin,Employee Overrides,View all overrides for an employee or leave type
+HR Admin,Balance Management,Credit or deduct leave days for any employee
+HR Admin,Balance Management,View any employee's leave balance
+HR Admin,Employee Management,Add a new employee with onboarding
+HR Admin,Employee Management,Update employee details
+HR Admin,Employee Management,Confirm an employee after probation
+HR Admin,Employee Management,Deactivate an employee on exit
+HR Admin,Employee Management,"Transfer an employee across departments, managers, or designations"
+HR Admin,Employee Management,Get full details of any employee
+HR Admin,Employee Management,Search employees by various filters
+HR Admin,Organization Structure,"Create, update, or deactivate departments"
+HR Admin,Organization Structure,"Create, update, or deactivate teams"
+HR Admin,Organization Structure,Add or remove employees from teams
+HR Admin,Organization Structure,List departments and teams with counts
+HR Admin,Bulk Operations,Create overrides for multiple employees filtered by criteria
+HR Admin,Bulk Operations,"Preview, confirm, or rollback batch operations"
+HR Admin,System Operations,Trigger yearly bulk credit
+HR Admin,System Operations,Trigger monthly accrual
+HR Admin,System Operations,Trigger year-end processing with optional dry-run
+HR Admin,System Operations,Set fallback approvers for managers on leave
+HR Admin,Company-wide Requests,View all leave requests across the company
+HR Admin,Company-wide Requests,Filter by status or employee
+HR Admin,HR Action Queue,"View, resolve, or dismiss open HR actions"
+HR Admin,HR Action Queue,Filter by priority
+HR Admin,HR Action Queue,Execute suggested fixes
+HR Admin,Optional Holidays,Create optional holidays for the year

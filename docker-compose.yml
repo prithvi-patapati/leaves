@@ -49,13 +49,6 @@ services:
     command: >
       sh -c "
         python manage.py migrate --noinput &&
-        python manage.py seed_departments 2>/dev/null || true &&
-        python manage.py seed_designations 2>/dev/null || true &&
-        python manage.py import_employees 2>/dev/null || true &&
-        python manage.py seed_company_config 2>/dev/null || true &&
-        python manage.py seed_leave_types 2>/dev/null || true &&
-        python manage.py bulk_credit_leaves --year 2026 2>/dev/null || true &&
-        python manage.py seed_onboarding_templates 2>/dev/null || true &&
         echo '=== HRMS API ready on :8000 ===' &&
         python manage.py runserver 0.0.0.0:8000
       "
@@ -81,9 +74,12 @@ services:
       dockerfile: Dockerfile
     environment:
       - HRMS_API_URL=http://api:8000
+      - XLAM_API_URL=http://host.docker.internal:8081/v1
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
       - SLACK_APP_TOKEN=${SLACK_APP_TOKEN}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - api
     restart: unless-stopped

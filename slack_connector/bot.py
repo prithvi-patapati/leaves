@@ -23,6 +23,7 @@ HRMS_API_URL = os.environ.get('HRMS_API_URL', 'http://localhost:8000')
 SLACK_BOT_TOKEN = os.environ.get('SLACK_BOT_TOKEN')
 SLACK_APP_TOKEN = os.environ.get('SLACK_APP_TOKEN')
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
+OPENAI_MODEL = os.environ.get('OPENAI_MODEL', 'gpt-4o')
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('slack_connector')
@@ -83,27 +84,22 @@ def hrms_get_all_employees():
     return []
 
 
+# ── Employee Input Resolver ──
+
 def _normalize(s):
     return re.sub(r'[^a-z0-9]', '', s.lower())
 
 
 def resolve_employee_input(text):
-    """Resolve flexible input to (employee_id, error_message).
-
-    Accepts: GIT-001, 001, 1, Prithvi, prithvi, pritvi (typo), etc.
-    Returns: (employee_id, None) on match, (None, suggestion_message) on failure.
-    """
     raw = text.strip().strip('`').strip()
     if not raw:
         return None, "Please provide an employee ID or name."
 
-    # Try exact ID match first (e.g., GIT-001)
     candidate = raw.upper().replace(' ', '')
     emp = hrms_get_employee(candidate)
     if emp:
         return emp['employee_id'], None
 
-    # Try with GIT- prefix if they typed just a number (e.g., 1, 01, 001, 23)
     digits = re.sub(r'[^0-9]', '', raw)
     if digits:
         padded = f"GIT-{digits.zfill(3)}"
@@ -111,23 +107,19 @@ def resolve_employee_input(text):
         if emp:
             return emp['employee_id'], None
 
-    # Load all employees for name/fuzzy matching
     all_emps = hrms_get_all_employees()
     if not all_emps:
         return None, f"Could not find `{raw}` and employee list is unavailable."
 
     query = _normalize(raw)
 
-    # Exact name match (case-insensitive)
     for e in all_emps:
         if _normalize(e.get('full_name', '')) == query:
             return e['employee_id'], None
-        # Match on first name
         first = e.get('full_name', '').split()[0] if e.get('full_name') else ''
         if first and _normalize(first) == query:
             return e['employee_id'], None
 
-    # Substring match
     substring_matches = []
     for e in all_emps:
         name_norm = _normalize(e.get('full_name', ''))
@@ -139,7 +131,6 @@ def resolve_employee_input(text):
         options = "\n".join(f"• `{e['employee_id']}` — {e.get('full_name', '')}" for e in substring_matches[:8])
         return None, f"Multiple matches for *{raw}*:\n{options}\n\nPlease use the ID to be specific."
 
-    # Fuzzy match: find names that share enough characters (handle typos)
     def similarity(a, b):
         common = sum(1 for c in set(a) if c in b)
         return (2.0 * common) / (len(set(a)) + len(set(b))) if a and b else 0
@@ -147,16 +138,12 @@ def resolve_employee_input(text):
     scored = []
     for e in all_emps:
         name = e.get('full_name', '')
-        # Check against full name and first name
-        full_sim = similarity(query, _normalize(name))
-        first_name = name.split()[0] if name else ''
-        first_sim = similarity(query, _normalize(first_name))
-        best = max(full_sim, first_sim)
+        best = max(similarity(query, _normalize(name)),
+                   similarity(query, _normalize(name.split()[0] if name else '')))
         if best > 0.5:
             scored.append((best, e))
 
     scored.sort(key=lambda x: -x[0])
-
     if scored:
         suggestions = "\n".join(f"• `{e['employee_id']}` — {e.get('full_name', '')}" for _, e in scored[:5])
         return None, f"Couldn't find *{raw}*. Did you mean:\n{suggestions}"
@@ -180,25 +167,52 @@ def build_system_prompt(role, emp):
     base = f"Today: {today}. Leave year: 2026 (April 2026 - March 2027).\n"
 
     if role == 'ADMIN':
-        return (f"You are Gamyam's HRMS assistant for HR administrators.\n"
-                f"Talking to: {name} ({emp_id}), HR Admin.\n{base}"
-                f"You have FULL access to all tools. Confirm before destructive actions. "
-                f"Ask prospective vs retroactive on entitlement changes. Check for override conflicts. "
-                f"Generate idempotency_key as HR_{emp_id}_action_{today}_xxxx.")
-
+        return (
+            f"You are Gamyam's HRMS leave management assistant for HR administrators.\n"
+            f"Talking to: {name} ({emp_id}), HR Admin.\n{base}\n"
+            f"You have access to 48 tools for managing the entire HRMS system:\n"
+            f"- Leave policy: create/update/deactivate leave types, view policies\n"
+            f"- Employee management: add/update/transfer/deactivate employees, search\n"
+            f"- Leave operations: view all requests, adjust balances, create overrides, bulk operations\n"
+            f"- Organization: departments, teams, HR actions\n"
+            f"- System: trigger bulk credit, monthly accrual, year-end processing\n\n"
+            f"IMPORTANT RULES:\n"
+            f"- NEVER make up data. Only state facts from tool results.\n"
+            f"- If tool results are empty, say so clearly (e.g. 'No leave types configured yet.').\n"
+            f"- Use leave type CODES: SL=Sick, PL=Planned/Casual, EL=Earned, LOP=Loss of Pay, "
+            f"WFH=Work From Home, BL=Bereavement, ML=Maternity, PtL=Paternity, OH=Optional Holiday.\n"
+            f"- Confirm before destructive actions.\n"
+            f"- Generate idempotency_key as HR_{emp_id}_action_{today}_xxxx."
+        )
     elif role == 'MANAGER':
-        return (f"You are Gamyam's HRMS assistant for managers.\n"
-                f"Talking to: {name} ({emp_id}), {desg_name} in {dept_name}.\n{base}"
-                f"You can view/approve/reject team requests and apply your own leaves. "
-                f"Show details before approving. Require reason for rejections. "
-                f"Generate idempotency_key as MGR_{emp_id}_action_{today}_xxxx.")
-
+        return (
+            f"You are Gamyam's HRMS leave management assistant for managers.\n"
+            f"Talking to: {name} ({emp_id}), {desg_name} in {dept_name}.\n{base}\n"
+            f"You can: view/approve/reject team leave requests, check team balances and calendar, "
+            f"apply for your own leaves.\n"
+            f"When showing pending requests, include: employee name, leave type, dates, reason, request ID.\n"
+            f"The 'id' field from get_team_requests is the request_id for approve/reject.\n\n"
+            f"IMPORTANT RULES:\n"
+            f"- NEVER make up data. Only state facts from tool results.\n"
+            f"- Show details before approving. Require reason for rejections.\n"
+            f"- Use leave type CODES: SL, PL, EL, LOP, WFH, BL, ML, PtL, OH.\n"
+            f"- Generate idempotency_key as MGR_{emp_id}_action_{today}_xxxx."
+        )
     else:
-        return (f"You are Gamyam's HRMS assistant for employees.\n"
-                f"Talking to: {name} ({emp_id}), {desg_name} in {dept_name}. Manager: {mgr_name}.\n{base}"
-                f"Always check balance before applying. Run validate_leave before apply_leave. "
-                f"Confirm with user before submitting. Explain policies simply. "
-                f"Generate idempotency_key as {emp_id}_action_{today}_xxxx.")
+        return (
+            f"You are Gamyam's HRMS leave management assistant for employees.\n"
+            f"Talking to: {name} ({emp_id}), {desg_name} in {dept_name}. Manager: {mgr_name}.\n{base}\n"
+            f"You can help with: checking leave balance, applying for leave, cancelling leave, "
+            f"explaining policies, viewing optional holidays.\n\n"
+            f"IMPORTANT RULES:\n"
+            f"- NEVER make up data. Only state facts from tool results.\n"
+            f"- Always check balance before applying. Run validate_leave before apply_leave.\n"
+            f"- Confirm with user before submitting any leave request.\n"
+            f"- Use leave type CODES: SL=Sick, PL=Planned/Casual, EL=Earned, LOP=Loss of Pay, "
+            f"WFH=Work From Home, BL=Bereavement, ML=Maternity, PtL=Paternity, OH=Optional Holiday.\n"
+            f"- Be concise and helpful.\n"
+            f"- Generate idempotency_key as {emp_id}_action_{today}_xxxx."
+        )
 
 
 def to_openai_tools(tools):
@@ -259,7 +273,7 @@ def process_message(uid, text):
     for _ in range(10):
         try:
             resp = openai_client.chat.completions.create(
-                model="gpt-4o", messages=messages,
+                model=OPENAI_MODEL, messages=messages,
                 tools=session['openai_tools'] or None,
                 tool_choice="auto" if session['openai_tools'] else None,
             )
@@ -365,6 +379,7 @@ if __name__ == "__main__":
     print("=" * 60)
     print("Gamyam HRMS — Slack Connector")
     print(f"API: {HRMS_API_URL}")
+    print(f"Model: {OPENAI_MODEL}")
     print(f"Bot Token: {'set' if SLACK_BOT_TOKEN else 'MISSING'}")
     print(f"App Token: {'set' if SLACK_APP_TOKEN else 'MISSING'}")
     print(f"OpenAI: {'set' if OPENAI_API_KEY else 'MISSING'}")
@@ -378,7 +393,7 @@ if __name__ == "__main__":
         r = requests.get(f'{HRMS_API_URL}/api/v1/leaves/policy/', timeout=5)
         print(f"HRMS API: reachable ({r.status_code})")
     except Exception as e:
-        print(f"HRMS API: not reachable ({e}) — bot will start but tools will fail")
+        print(f"HRMS API: not reachable ({e})")
 
     print("Starting Socket Mode...")
     SocketModeHandler(app, SLACK_APP_TOKEN).start()

@@ -1,7 +1,7 @@
 MANAGER_TOOLS = [
     {
         "name": "get_team_requests",
-        "description": "Get leave requests from your direct reports.",
+        "description": "Get leave requests from your direct reports. Each result has an 'id' field — use that as 'request_id' when approving or rejecting.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -12,11 +12,11 @@ MANAGER_TOOLS = [
     },
     {
         "name": "approve_leave",
-        "description": "Approve a pending leave request.",
+        "description": "Approve a pending leave request. The request_id is the 'id' field from get_team_requests results.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "request_id": {"type": "integer"},
+                "request_id": {"type": "integer", "description": "The 'id' from get_team_requests (e.g. 1, 2, 3)"},
                 "remarks": {"type": "string"}
             },
             "required": ["request_id"]
@@ -25,11 +25,11 @@ MANAGER_TOOLS = [
     },
     {
         "name": "reject_leave",
-        "description": "Reject a pending leave request.",
+        "description": "Reject a pending leave request. The request_id is the 'id' field from get_team_requests results.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "request_id": {"type": "integer"},
+                "request_id": {"type": "integer", "description": "The 'id' from get_team_requests (e.g. 1, 2, 3)"},
                 "remarks": {"type": "string"}
             },
             "required": ["request_id", "remarks"]
