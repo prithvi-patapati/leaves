@@ -334,7 +334,7 @@ def _format_balance_blocks(text_reply, tool_results):
             continue
 
         # Build a monospace table from the balance data
-        balances = result if isinstance(result, list) else result.get("balances", []) if isinstance(result, dict) else []
+        balances = result if isinstance(result, list) else result.get("results", result.get("balances", [])) if isinstance(result, dict) else []
         if not balances:
             continue
 
@@ -342,11 +342,11 @@ def _format_balance_blocks(text_reply, tool_results):
 
         for bal in balances:
             # Handle team balance (has employee info) or personal balance
-            emp_name = bal.get("employee_name", bal.get("employee", ""))
-            leave_type = bal.get("leave_type", bal.get("leave_type_code", ""))
-            total = bal.get("total_allocated", bal.get("total", "N/A"))
-            used = bal.get("used", bal.get("leaves_taken", "N/A"))
-            available = bal.get("available", bal.get("remaining", bal.get("balance", "N/A")))
+            emp_name = bal.get("employee_name", bal.get("employee_code", ""))
+            leave_type = bal.get("leave_type_name", bal.get("leave_type_code", ""))
+            total = bal.get("entitled", bal.get("total", "N/A"))
+            used = bal.get("used", "N/A")
+            available = bal.get("available", "N/A")
 
             line_parts = []
             if emp_name:
@@ -372,7 +372,7 @@ def _format_team_requests_blocks(text_reply, tool_results, employee_id, role):
         if isinstance(result, dict) and result.get("error"):
             continue
 
-        requests_list = result if isinstance(result, list) else result.get("requests", result.get("data", [])) if isinstance(result, dict) else []
+        requests_list = result if isinstance(result, list) else result.get("results", result.get("requests", [])) if isinstance(result, dict) else []
         if not requests_list:
             continue
 
@@ -448,6 +448,10 @@ def _format_leave_confirm_blocks(text_reply, tool_results, employee_id, role):
 
         # Extract the leave details from the validate_leave arguments
         leave_details = tc["args"].copy()
+        # Add reason from conversation context — GPT-4o should have collected it
+        # If not available, the apply handler will use a default
+        if "reason" not in leave_details:
+            leave_details["reason"] = "As discussed"
         leave_details_json = json.dumps({
             "leave_details": leave_details,
             "employee_id": employee_id,
@@ -491,7 +495,7 @@ def _format_policy_blocks(text_reply, tool_results):
         if isinstance(result, dict) and result.get("error"):
             continue
 
-        policies = result if isinstance(result, list) else result.get("leave_types", result.get("policies", [])) if isinstance(result, dict) else []
+        policies = result if isinstance(result, list) else result.get("results", result.get("leave_types", [])) if isinstance(result, dict) else []
         if not policies:
             continue
 
@@ -562,7 +566,7 @@ def _build_response(text_reply, tool_calls_log, employee_id, role):
                 if isinstance(result, list) and result:
                     has_requests = True
                 elif isinstance(result, dict):
-                    reqs = result.get("requests", result.get("data", []))
+                    reqs = result.get("results", result.get("requests", []))
                     if reqs:
                         has_requests = True
                 if has_requests:
