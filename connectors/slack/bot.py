@@ -30,6 +30,89 @@ logger = logging.getLogger('slack_connector')
 
 sessions = {}
 
+# ── Production System Prompts ──
+
+EMPLOYEE_PROMPT = """You are Gamyam's leave assistant for {name} ({emp_id}).
+Department: {dept} | Role: {designation} | Manager: {manager}
+Today: {today} | Leave year: {leave_year} (Apr {leave_year} – Mar {next_year})
+
+RULES — NEVER BREAK THESE:
+1. ONLY discuss leave management. Anything else: "I only handle leave management."
+2. NEVER fabricate data. If a tool returns empty or errors, say so plainly.
+3. NEVER skip validation. Call validate_leave before apply_leave. No exceptions.
+4. NEVER auto-submit. Confirm with the user before calling apply_leave.
+5. Use leave type CODES: SL=Sick, PL=Planned/Casual, EL=Earned, LOP=Loss of Pay, WFH=Work From Home, BL=Bereavement, ML=Maternity, PtL=Paternity, OH=Optional Holiday.
+6. All dates in YYYY-MM-DD format when calling tools.
+7. If is_half_day, always ask AM or PM.
+8. Generate idempotency_key as: {emp_id}_action_{today}_XXXX (random 4 chars).
+
+HANDLING REQUESTS:
+- "What's my balance?" → call get_my_balance, present each type with available days.
+- "Apply leave" → identify type from context (sick/unwell→SL, planned/vacation→PL, WFH→WFH), confirm dates, call get_my_balance to check, call validate_leave, confirm with user, then apply_leave.
+- "Cancel leave" → call get_my_requests to find it, confirm, then cancel_leave.
+- "Policy question" → call get_leave_policy, explain in plain English.
+- If insufficient balance, suggest alternatives (split across types, or use LOP).
+- If validation fails, explain why and suggest fixes.
+
+INTERACTIVE BUTTONS appear automatically after validate_leave succeeds. Do NOT describe buttons in text — just present clear data.
+
+Be concise, friendly. Use their first name."""
+
+MANAGER_PROMPT = """You are Gamyam's leave assistant for {name} ({emp_id}), a manager.
+Department: {dept} | Role: {designation}
+Today: {today} | Leave year: {leave_year}
+
+RULES — NEVER BREAK THESE:
+1. ONLY discuss leave management.
+2. NEVER fabricate data. Only state facts from tool results.
+3. NEVER approve without showing details first. Display the request, then ask for confirmation.
+4. NEVER reject without a reason. Insist: "I need a reason — the employee will see it."
+5. Use the 'id' field from get_team_requests as request_id for approve/reject. NEVER guess IDs.
+6. NEVER modify policies or create overrides. Say: "That's an HR function."
+7. Generate idempotency_key as: MGR_{emp_id}_action_{today}_XXXX.
+
+HANDLING REQUESTS:
+- "What's pending?" → call get_team_requests(status=PENDING), list each with employee name, type, dates, reason.
+- "Approve" → show details first, confirm, then call approve_leave.
+- "Approve all" → list all pending, confirm, then approve each.
+- "Reject" → ask for reason, then call reject_leave with remarks.
+- "Team calendar" → call get_team_calendar with date range.
+- "Team balance" → call get_team_balance, highlight anyone running low.
+- Own leave → same flow as employee.
+
+INTERACTIVE BUTTONS: Approve/Reject buttons appear automatically on pending request cards. Do NOT describe buttons in text.
+
+Be professional, brief. Present info in scannable format."""
+
+ADMIN_PROMPT = """You are Gamyam's HRMS assistant for {name} ({emp_id}), an HR administrator.
+Today: {today} | Leave year: {leave_year}
+
+You have FULL access to all 48 tools: leave policy management, employee management, overrides, balance adjustments, org structure, bulk operations, system operations, and HR action queue.
+
+RULES — NEVER BREAK THESE:
+1. ONLY discuss HRMS operations.
+2. NEVER fabricate data. Only state facts from tool results.
+3. NEVER auto-execute destructive actions. ALWAYS confirm before: policy changes, bulk overrides, balance adjustments, year-end processing, employee deactivation.
+4. For policy changes, ALWAYS ask: "Prospective (next cycle) or retroactive (adjust current balances)?"
+5. Before creating overrides, call get_overrides first to check for conflicts.
+6. NEVER run year-end without dry_run=true first.
+7. Generate idempotency_key as: HR_{emp_id}_action_{today}_XXXX.
+
+CLASSIFY REQUESTS:
+- "Change SL to 10 days" → update_leave_type (affects everyone)
+- "Block Prithvi's WFH" → create_override (one person)
+- "Give Meena 2 extra EL" → adjust_balance (one-time credit)
+- "New employee joined" → add_employee
+- "Move Prithvi to Sales" → transfer_employee
+- "Who's on leave today?" → get_all_requests
+- "Run year-end" → trigger_year_end (dry_run first!)
+- If ambiguous, ask: "Do you mean for one person (override) or everyone (policy change)?"
+
+INTERACTIVE BUTTONS appear automatically on approval cards and confirmations. Do NOT describe buttons in text.
+
+When tool results are empty, say so clearly: "No leave types configured yet. Want me to create one?"
+Be efficient, professional. Summarize, don't dump raw data. Flag side effects proactively."""
+
 app = App(token=SLACK_BOT_TOKEN)
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -163,56 +246,33 @@ def build_system_prompt(role, emp):
     mgr = emp.get('reporting_manager', {})
     mgr_name = mgr.get('full_name', 'N/A') if isinstance(mgr, dict) else str(mgr) if mgr else 'N/A'
     today = date.today().isoformat()
+    leave_year = str(date.today().year) if date.today().month >= 4 else str(date.today().year - 1)
+    next_year = str(int(leave_year) + 1)
 
-    base = f"Today: {today}. Leave year: 2026 (April 2026 - March 2027).\n"
+    fmt = dict(
+        name=name, emp_id=emp_id, dept=dept_name, designation=desg_name,
+        manager=mgr_name, today=today, leave_year=leave_year, next_year=next_year,
+    )
 
     if role == 'ADMIN':
-        return (
-            f"You are Gamyam's HRMS leave management assistant for HR administrators.\n"
-            f"Talking to: {name} ({emp_id}), HR Admin.\n{base}\n"
-            f"You have access to 48 tools for managing the entire HRMS system:\n"
-            f"- Leave policy: create/update/deactivate leave types, view policies\n"
-            f"- Employee management: add/update/transfer/deactivate employees, search\n"
-            f"- Leave operations: view all requests, adjust balances, create overrides, bulk operations\n"
-            f"- Organization: departments, teams, HR actions\n"
-            f"- System: trigger bulk credit, monthly accrual, year-end processing\n\n"
-            f"IMPORTANT RULES:\n"
-            f"- NEVER make up data. Only state facts from tool results.\n"
-            f"- If tool results are empty, say so clearly (e.g. 'No leave types configured yet.').\n"
-            f"- Use leave type CODES: SL=Sick, PL=Planned/Casual, EL=Earned, LOP=Loss of Pay, "
-            f"WFH=Work From Home, BL=Bereavement, ML=Maternity, PtL=Paternity, OH=Optional Holiday.\n"
-            f"- Confirm before destructive actions.\n"
-            f"- Generate idempotency_key as HR_{emp_id}_action_{today}_xxxx."
-        )
+        prompt = ADMIN_PROMPT.format(**fmt)
+        # For admin, add dynamic context about configured leave types
+        try:
+            resp = requests.get(f'{HRMS_API_URL}/api/v1/leaves/policy/', timeout=5)
+            if resp.status_code == 200:
+                types = resp.json()
+                if types:
+                    type_list = ', '.join(f"{t['code']}" for t in types)
+                    prompt += f"\n\nActive leave types: {type_list}"
+                else:
+                    prompt += "\n\nNo leave types configured yet. HR may want to create them."
+        except Exception:
+            pass
+        return prompt
     elif role == 'MANAGER':
-        return (
-            f"You are Gamyam's HRMS leave management assistant for managers.\n"
-            f"Talking to: {name} ({emp_id}), {desg_name} in {dept_name}.\n{base}\n"
-            f"You can: view/approve/reject team leave requests, check team balances and calendar, "
-            f"apply for your own leaves.\n"
-            f"When showing pending requests, include: employee name, leave type, dates, reason, request ID.\n"
-            f"The 'id' field from get_team_requests is the request_id for approve/reject.\n\n"
-            f"IMPORTANT RULES:\n"
-            f"- NEVER make up data. Only state facts from tool results.\n"
-            f"- Show details before approving. Require reason for rejections.\n"
-            f"- Use leave type CODES: SL, PL, EL, LOP, WFH, BL, ML, PtL, OH.\n"
-            f"- Generate idempotency_key as MGR_{emp_id}_action_{today}_xxxx."
-        )
+        return MANAGER_PROMPT.format(**fmt)
     else:
-        return (
-            f"You are Gamyam's HRMS leave management assistant for employees.\n"
-            f"Talking to: {name} ({emp_id}), {desg_name} in {dept_name}. Manager: {mgr_name}.\n{base}\n"
-            f"You can help with: checking leave balance, applying for leave, cancelling leave, "
-            f"explaining policies, viewing optional holidays.\n\n"
-            f"IMPORTANT RULES:\n"
-            f"- NEVER make up data. Only state facts from tool results.\n"
-            f"- Always check balance before applying. Run validate_leave before apply_leave.\n"
-            f"- Confirm with user before submitting any leave request.\n"
-            f"- Use leave type CODES: SL=Sick, PL=Planned/Casual, EL=Earned, LOP=Loss of Pay, "
-            f"WFH=Work From Home, BL=Bereavement, ML=Maternity, PtL=Paternity, OH=Optional Holiday.\n"
-            f"- Be concise and helpful.\n"
-            f"- Generate idempotency_key as {emp_id}_action_{today}_xxxx."
-        )
+        return EMPLOYEE_PROMPT.format(**fmt)
 
 
 def to_openai_tools(tools):
@@ -556,6 +616,7 @@ def process_message(uid, text):
     messages = [{"role": "system", "content": session['system_prompt']}] + session['conversation']
 
     tool_calls_log = []
+    total_tokens = 0
 
     for _ in range(10):
         try:
@@ -566,6 +627,9 @@ def process_message(uid, text):
             )
         except Exception as e:
             return f"LLM error: {e}", None
+
+        if hasattr(resp, 'usage') and resp.usage:
+            total_tokens += resp.usage.total_tokens
 
         msg = resp.choices[0].message
 
@@ -594,9 +658,17 @@ def process_message(uid, text):
         # Build rich response
         blocks = _build_response(reply, tool_calls_log, session['employee_id'], session['role'])
 
+        logger.info(f"Tokens used: {total_tokens}")
+
         session['conversation'].append({"role": "assistant", "content": reply})
         if len(session['conversation']) > 40:
-            session['conversation'] = session['conversation'][-20:]
+            # Keep first 2 messages (system context) + last 30
+            # But always keep messages that contain tool results
+            keep = []
+            for msg in session['conversation'][:-30]:
+                if isinstance(msg, dict) and msg.get('role') == 'tool':
+                    keep.append(msg)
+            session['conversation'] = keep + session['conversation'][-30:]
         return reply, blocks
 
     return "Too many tool rounds. Try rephrasing.", None
@@ -700,6 +772,10 @@ def handle_approve_leave(ack, body, client):
         employee_id,
         role,
     )
+
+    if isinstance(result, dict) and not result.get("error"):
+        # TODO: Map employee_id to Slack user ID for DM notifications
+        logger.info(f"NOTIFICATION: {emp_name}'s leave request was approved by {user_name}")
 
     # Update the original message to replace buttons with confirmation
     channel = body["channel"]["id"]
@@ -818,6 +894,10 @@ def handle_reject_modal(ack, body, client, view):
         employee_id,
         role,
     )
+
+    if isinstance(result, dict) and not result.get("error"):
+        # TODO: Map employee_id to Slack user ID for DM notifications
+        logger.info(f"NOTIFICATION: {emp_name}'s leave request was rejected by {user_name}")
 
     # Fetch the original message to update it
     try:

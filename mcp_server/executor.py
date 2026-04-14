@@ -9,6 +9,25 @@ class ToolExecutionError(Exception):
     pass
 
 
+_ERROR_TRANSLATIONS = {
+    'LeaveType matching query does not exist': 'That leave type does not exist. Check the code (SL, PL, EL, etc).',
+    'Employee.DoesNotExist': 'Employee not found. Check the employee ID.',
+    'Insufficient balance': 'Not enough leave days available.',
+    'cannot be applied in advance': 'This leave type cannot be applied in advance. Apply on or after the day.',
+    'cannot be applied retroactively': 'This leave type cannot be applied retroactively.',
+    'not the current approver': 'You are not the approver for this request.',
+    'not pending': 'This request is not pending anymore.',
+    'maximum recursion': 'Internal error. Please try again.',
+}
+
+
+def _translate_error(error_str):
+    for key, friendly in _ERROR_TRANSLATIONS.items():
+        if key in error_str:
+            return friendly
+    return error_str
+
+
 # Tools that need `employee` (the caller) as first positional arg
 _EMPLOYEE_PARAM_TOOLS = {
     'apply_leave', 'cancel_leave', 'validate_leave',
@@ -134,7 +153,7 @@ def execute_tool(tool_name, arguments, user_context):
 
         return _serialize_result(result)
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": _translate_error(str(e))}
 
 
 def _get_params(func):
@@ -169,6 +188,8 @@ _DROP_FK_FIELDS = {
     'leave_type_id', 'current_approver_id', 'approved_by_id',
     'rejected_by_id', 'policy_version_id', 'calendar_event_id',
     'calendar_synced', 'applied_via', 'idempotency_key',
+    'department_id', 'designation_id', 'reporting_manager_id',
+    'created_by_id',
 }
 
 
@@ -212,6 +233,20 @@ def _serialize_result(result):
             approver = result.current_approver
             if approver:
                 data['approver'] = approver.full_name
+        if hasattr(result, 'department_id') and hasattr(result, 'department'):
+            dept = result.department
+            if dept:
+                data['department_name'] = dept.name
+                data['department_code'] = dept.code
+        if hasattr(result, 'designation_id') and hasattr(result, 'designation'):
+            desg = result.designation
+            if desg:
+                data['designation_name'] = desg.title
+        if hasattr(result, 'reporting_manager_id') and hasattr(result, 'reporting_manager'):
+            mgr = result.reporting_manager
+            if mgr:
+                data['manager_name'] = mgr.full_name
+                data['manager_id'] = mgr.employee_id
         if hasattr(result, 'available'):
             data['available'] = str(result.available)
         return data

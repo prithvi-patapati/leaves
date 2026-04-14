@@ -1,7 +1,7 @@
 EMPLOYEE_MGMT_TOOLS = [
     {
         "name": "add_employee",
-        "description": "Add new joiner. Triggers onboarding templates.",
+        "description": "Add a new employee. Triggers onboarding templates automatically. department_code must match an existing department (e.g. ENGINEERING, HR, ADMIN). designation_title must match an existing designation (e.g. Software Engineer, Senior Project Manager, CEO).",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -23,7 +23,7 @@ EMPLOYEE_MGMT_TOOLS = [
     },
     {
         "name": "update_employee",
-        "description": "Update employee fields.",
+        "description": "Update employee fields. The changes object can include: first_name, last_name, email, phone, gender, employment_type, probation_status. Example: {'phone': '9876543210'}.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -36,7 +36,7 @@ EMPLOYEE_MGMT_TOOLS = [
     },
     {
         "name": "confirm_employee",
-        "description": "End probation for employee.",
+        "description": "End probation and confirm the employee. Changes probation_status to CONFIRMED. Unlocks leave types restricted during probation (e.g. WFH, PtL).",
         "input_schema": {
             "type": "object",
             "properties": {"employee_id": {"type": "string"}},
@@ -46,7 +46,7 @@ EMPLOYEE_MGMT_TOOLS = [
     },
     {
         "name": "deactivate_employee",
-        "description": "Deactivate employee (exit).",
+        "description": "Process employee exit. Sets is_active=false, records last_working_date and exit_reason. Cancels all pending leave requests. Creates an EXIT HR action for follow-up.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -60,7 +60,7 @@ EMPLOYEE_MGMT_TOOLS = [
     },
     {
         "name": "transfer_employee",
-        "description": "Transfer employee — change dept/manager/designation.",
+        "description": "Transfer employee to a different department, reporting manager, or designation. At least one of department_code, reporting_manager_id, or designation_title is required.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -75,7 +75,7 @@ EMPLOYEE_MGMT_TOOLS = [
     },
     {
         "name": "get_employee",
-        "description": "Get full employee details.",
+        "description": "Get complete employee details including department, designation, reporting manager, teams, employment type, probation status, and dates.",
         "input_schema": {
             "type": "object",
             "properties": {"employee_id": {"type": "string"}},
@@ -85,7 +85,7 @@ EMPLOYEE_MGMT_TOOLS = [
     },
     {
         "name": "search_employees",
-        "description": "Search employees by various filters.",
+        "description": "Search employees by filters. All filters are optional and combinable. department accepts department name (e.g. 'Engineering'). name does partial match. Returns list with employee_id, full_name, department, designation, manager.",
         "input_schema": {
             "type": "object",
             "properties": {

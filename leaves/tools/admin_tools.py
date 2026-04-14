@@ -1,7 +1,7 @@
 ADMIN_TOOLS = [
     {
         "name": "create_leave_type",
-        "description": "Create a new leave type/policy.",
+        "description": "Create a new leave type. Required: code (e.g. SL), name, entitlement_days, credit_method (BULK=credited yearly, MONTHLY=accrues monthly, EVENT=credited on specific events like maternity, ON_DEMAND=unlimited like LOP). Optional: approval_chain (e.g. ['REPORTING_MANAGER', 'HR']).",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -17,7 +17,7 @@ ADMIN_TOOLS = [
     },
     {
         "name": "update_leave_type",
-        "description": "Update leave type configuration.",
+        "description": "Update a leave type's configuration. The 'changes' object can include: entitlement_days, credit_method, half_day_allowed, advance_notice_days, can_apply_in_advance, can_apply_retroactively, document_required, document_required_after_days, gender_restriction, probation_eligible, carry_forward_max, year_end_action (LAPSE/CARRY/CONVERT), approval_chain. Always provide change_summary describing what changed and why.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -42,7 +42,7 @@ ADMIN_TOOLS = [
     },
     {
         "name": "create_override",
-        "description": "Create per-employee leave override.",
+        "description": "Create a per-employee exception to leave policy. block_application=true prevents them from applying. block_accrual=true stops monthly accrual. modify_entitlement overrides their annual entitlement days. waive_restriction is a dict of policy fields to override (e.g. {'probation_eligible': true} to allow WFH during probation). leave_type_code is optional — null means applies to ALL leave types. effective_from and effective_to define the date range.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -87,7 +87,7 @@ ADMIN_TOOLS = [
     },
     {
         "name": "adjust_balance",
-        "description": "Manual balance adjustment by HR.",
+        "description": "Manually credit or deduct leave days. Positive days = credit (reward/correction). Negative days = deduct (penalty/correction). Creates an audit trail in the ledger.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -102,7 +102,7 @@ ADMIN_TOOLS = [
     },
     {
         "name": "bulk_create_overrides",
-        "description": "Create overrides for multiple employees.",
+        "description": "Create overrides for multiple employees at once. filter_criteria can include: {department: 'ENGINEERING', probation_status: 'ON_PROBATION', employment_type: 'INTERN'}. override_template has the same fields as create_override (block_application, block_accrual, etc). Returns a PREVIEW — must call confirm_batch to execute.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -115,7 +115,7 @@ ADMIN_TOOLS = [
     },
     {
         "name": "confirm_batch",
-        "description": "Confirm and execute a pending batch operation.",
+        "description": "Execute a pending batch operation. Only works on PENDING_CONFIRMATION batches. This actually creates the overrides for all matched employees.",
         "input_schema": {
             "type": "object",
             "properties": {"batch_id": {"type": "integer"}},
@@ -125,7 +125,7 @@ ADMIN_TOOLS = [
     },
     {
         "name": "rollback_batch",
-        "description": "Rollback an executed batch operation.",
+        "description": "Undo an executed batch. Deactivates all overrides created by the batch. Only works on EXECUTED batches.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -138,7 +138,7 @@ ADMIN_TOOLS = [
     },
     {
         "name": "set_fallback_manager",
-        "description": "Set a fallback approver when manager is on leave.",
+        "description": "Set a backup approver for when a manager is on leave. employee_id is the employee whose requests need an approver. primary_manager_id is their normal manager. fallback_manager_id is the backup. effective_from/to define the date range.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -155,7 +155,7 @@ ADMIN_TOOLS = [
     },
     {
         "name": "trigger_bulk_credit",
-        "description": "Run bulk credit for a leave year.",
+        "description": "Credit annual leave balances for all employees. Only credits BULK-type leaves (e.g. SL, WFH). Run once per year in April. Optional leave_type to credit only one type.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -168,7 +168,7 @@ ADMIN_TOOLS = [
     },
     {
         "name": "trigger_monthly_accrual",
-        "description": "Run monthly accrual for current month.",
+        "description": "Run monthly leave accrual for MONTHLY-type leaves (e.g. PL, EL). Credits monthly_accrual_rate days to each employee. Run once per month.",
         "input_schema": {
             "type": "object",
             "properties": {"date": {"type": "string", "format": "date"}}
@@ -177,7 +177,7 @@ ADMIN_TOOLS = [
     },
     {
         "name": "trigger_year_end",
-        "description": "Run year-end processing.",
+        "description": "Run year-end processing. LAPSE types: unused balance expires. CARRY types: carry forward up to carry_forward_max, rest lapses. CONVERT types: unused balance converts to another leave type. ALWAYS run with dry_run=true first to preview, then dry_run=false to execute.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -190,7 +190,7 @@ ADMIN_TOOLS = [
     },
     {
         "name": "get_all_requests",
-        "description": "Get all leave requests (admin view).",
+        "description": "View all leave requests across the company. Filter by status (PENDING/APPROVED/REJECTED/CANCELLED) and/or employee_id.",
         "input_schema": {
             "type": "object",
             "properties": {

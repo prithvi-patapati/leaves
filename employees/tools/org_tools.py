@@ -1,7 +1,7 @@
 ORG_TOOLS = [
     {
         "name": "create_department",
-        "description": "Create a new department.",
+        "description": "Create a new department. code should be uppercase (e.g. SALES, FINANCE).",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -15,7 +15,7 @@ ORG_TOOLS = [
     },
     {
         "name": "update_department",
-        "description": "Update department details.",
+        "description": "Update department details. Can change name or deactivate with is_active=false.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -29,13 +29,13 @@ ORG_TOOLS = [
     },
     {
         "name": "list_departments",
-        "description": "List all departments with employee counts.",
+        "description": "List all departments with employee counts. Use active_only=true to exclude deactivated departments.",
         "input_schema": {"type": "object", "properties": {"active_only": {"type": "boolean"}}},
         "handler": "employees.services.org_service.list_departments"
     },
     {
         "name": "create_team",
-        "description": "Create a new project/product team.",
+        "description": "Create a new project/product team. Teams are cross-departmental groupings. code should be uppercase (e.g. PLATFORM, MOBILE).",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -69,7 +69,7 @@ ORG_TOOLS = [
     },
     {
         "name": "add_to_team",
-        "description": "Add employee to a team.",
+        "description": "Add employee to a team. An employee can belong to multiple teams.",
         "input_schema": {
             "type": "object",
             "properties": {

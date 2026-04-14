@@ -25,7 +25,7 @@ MANAGER_TOOLS = [
     },
     {
         "name": "reject_leave",
-        "description": "Reject a pending leave request. The request_id is the 'id' field from get_team_requests results.",
+        "description": "Reject a pending leave request. The request_id is the 'id' field from get_team_requests results. remarks are mandatory — the employee will see the rejection reason.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -38,13 +38,13 @@ MANAGER_TOOLS = [
     },
     {
         "name": "get_team_balance",
-        "description": "Get leave balances of your direct reports.",
+        "description": "Get leave balances of your direct reports. Returns leave balances for all your direct reports with employee_code, employee_name, leave_type_code, entitled, used, available.",
         "input_schema": {"type": "object", "properties": {}},
         "handler": "leaves.services.balance_manager.get_team_balances"
     },
     {
         "name": "get_team_calendar",
-        "description": "View team leave calendar for a date range.",
+        "description": "View team leave calendar for a date range. Returns approved leave requests within the date range for your direct reports. Use to check who is off on specific days.",
         "input_schema": {
             "type": "object",
             "properties": {

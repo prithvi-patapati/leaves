@@ -1,7 +1,7 @@
 EMPLOYEE_TOOLS = [
     {
         "name": "apply_leave",
-        "description": "Apply for leave. Use leave type CODE (not name): SL=Sick Leave, PL=Planned/Casual Leave, EL=Earned Leave, LOP=Loss of Pay, WFH=Work From Home, BL=Bereavement Leave, ML=Maternity Leave, PtL=Paternity Leave, OH=Optional Holiday.",
+        "description": "Apply for leave. Use leave type CODE (not name): SL=Sick Leave, PL=Planned/Casual Leave, EL=Earned Leave, LOP=Loss of Pay, WFH=Work From Home, BL=Bereavement Leave, ML=Maternity Leave, PtL=Paternity Leave, OH=Optional Holiday. If is_half_day=true, half_day_period (AM or PM) is REQUIRED.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -19,7 +19,7 @@ EMPLOYEE_TOOLS = [
     },
     {
         "name": "cancel_leave",
-        "description": "Cancel a pending or approved leave request.",
+        "description": "Cancel a pending or approved leave request. Can cancel PENDING or APPROVED requests. Balance is restored automatically.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -43,7 +43,7 @@ EMPLOYEE_TOOLS = [
     },
     {
         "name": "get_my_requests",
-        "description": "Get the employee's leave requests.",
+        "description": "Get the employee's leave requests. Returns list with id, leave_type_code, leave_type_name, dates, status, approver.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -54,13 +54,13 @@ EMPLOYEE_TOOLS = [
     },
     {
         "name": "get_leave_policy",
-        "description": "Get all active leave type configurations.",
+        "description": "Get all active leave type configurations. Returns all leave types with entitlement_days, credit_method, advance_notice_days, carry_forward, half_day_allowed, gender_restriction, probation_eligible, and all other policy rules.",
         "input_schema": {"type": "object", "properties": {}},
         "handler": "leaves.services.policy_manager.get_all_policies"
     },
     {
         "name": "validate_leave",
-        "description": "Dry-run validation of a leave request. Always call this before apply_leave. Use leave type CODE: SL, PL, EL, LOP, WFH, BL, ML, PtL, OH.",
+        "description": "Dry-run validation of a leave request. Always call this before apply_leave. Use leave type CODE: SL, PL, EL, LOP, WFH, BL, ML, PtL, OH. If is_half_day=true, half_day_period (AM or PM) is REQUIRED. Returns {valid: true/false, message: error_details}.",
         "input_schema": {
             "type": "object",
             "properties": {
