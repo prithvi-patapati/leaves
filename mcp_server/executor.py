@@ -91,6 +91,18 @@ def execute_tool(tool_name, arguments, user_context):
 
     processed_args = _process_arguments(arguments)
 
+    # Resolve any employee_id-like args that might be names instead of IDs
+    for key in list(processed_args.keys()):
+        if key in ('employee_id', 'primary_manager_id', 'fallback_manager_id', 'reporting_manager_id'):
+            val = processed_args[key]
+            if isinstance(val, str) and val and not Employee.objects.filter(employee_id=val).exists():
+                # Try to find by name
+                match = Employee.objects.filter(full_name__icontains=val).first()
+                if not match:
+                    match = Employee.objects.filter(first_name__icontains=val).first()
+                if match:
+                    processed_args[key] = match.employee_id
+
     # Remap argument names
     if tool_name in _ARG_REMAP:
         for old_key, new_key in _ARG_REMAP[tool_name].items():
