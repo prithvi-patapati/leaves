@@ -258,6 +258,291 @@ def set_role(uid, text_input, role):
     return f"Switched to *{label}* mode as *{session['name']}* (`{employee_id}`)\n_{len(tools)} tools loaded. Start chatting!_"
 
 
+# ── Block Kit Helpers ──
+
+def _format_balance_blocks(text_reply, tool_results):
+    """Format balance data as clean Slack blocks."""
+    blocks = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": text_reply}},
+    ]
+
+    for tc in tool_results:
+        if tc["tool"] not in ("get_my_balance", "get_team_balance"):
+            continue
+        result = tc["result"]
+        if isinstance(result, dict) and result.get("error"):
+            continue
+
+        # Build a monospace table from the balance data
+        balances = result if isinstance(result, list) else result.get("balances", []) if isinstance(result, dict) else []
+        if not balances:
+            continue
+
+        blocks.append({"type": "divider"})
+
+        for bal in balances:
+            # Handle team balance (has employee info) or personal balance
+            emp_name = bal.get("employee_name", bal.get("employee", ""))
+            leave_type = bal.get("leave_type", bal.get("leave_type_code", ""))
+            total = bal.get("total_allocated", bal.get("total", "N/A"))
+            used = bal.get("used", bal.get("leaves_taken", "N/A"))
+            available = bal.get("available", bal.get("remaining", bal.get("balance", "N/A")))
+
+            line_parts = []
+            if emp_name:
+                line_parts.append(f"*{emp_name}*")
+            line_parts.append(f"`{leave_type}`  Total: `{total}` | Used: `{used}` | Available: `{available}`")
+            text = "  ".join(line_parts) if line_parts else str(bal)
+
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": text}})
+
+    return blocks
+
+
+def _format_team_requests_blocks(text_reply, tool_results, employee_id, role):
+    """Format pending requests with approve/reject buttons."""
+    blocks = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": text_reply}},
+    ]
+
+    for tc in tool_results:
+        if tc["tool"] != "get_team_requests":
+            continue
+        result = tc["result"]
+        if isinstance(result, dict) and result.get("error"):
+            continue
+
+        requests_list = result if isinstance(result, list) else result.get("requests", result.get("data", [])) if isinstance(result, dict) else []
+        if not requests_list:
+            continue
+
+        for req in requests_list:
+            request_id = req.get("id", req.get("request_id"))
+            emp_name = req.get("employee_name", req.get("employee", "Unknown"))
+            leave_type = req.get("leave_type", req.get("leave_type_code", "N/A"))
+            start_date = req.get("start_date", req.get("from_date", "N/A"))
+            end_date = req.get("end_date", req.get("to_date", "N/A"))
+            reason = req.get("reason", req.get("remarks", "No reason provided"))
+            status = req.get("status", "")
+
+            blocks.append({"type": "divider"})
+
+            detail_text = (
+                f"*{emp_name}* — `{leave_type}`\n"
+                f"Dates: {start_date} to {end_date}\n"
+                f"Reason: _{reason}_\n"
+                f"Request ID: `{request_id}`"
+            )
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": detail_text}})
+
+            # Only show buttons for pending requests
+            if status.lower() in ("pending", "pending_approval", "") or not status:
+                btn_data = json.dumps({
+                    "request_id": request_id,
+                    "employee_id": employee_id,
+                    "role": role,
+                    "employee_name": emp_name,
+                })
+                blocks.append({
+                    "type": "actions",
+                    "elements": [
+                        {
+                            "type": "button",
+                            "text": {"type": "plain_text", "text": "Approve"},
+                            "style": "primary",
+                            "action_id": "approve_leave_btn",
+                            "value": btn_data,
+                        },
+                        {
+                            "type": "button",
+                            "text": {"type": "plain_text", "text": "Reject"},
+                            "style": "danger",
+                            "action_id": "reject_leave_btn",
+                            "value": btn_data,
+                        },
+                    ],
+                })
+
+    return blocks
+
+
+def _format_leave_confirm_blocks(text_reply, tool_results, employee_id, role):
+    """Format leave validation result with confirm/cancel buttons."""
+    blocks = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": text_reply}},
+    ]
+
+    for tc in tool_results:
+        if tc["tool"] != "validate_leave":
+            continue
+        result = tc["result"]
+        if isinstance(result, dict) and result.get("error"):
+            continue
+
+        valid = False
+        if isinstance(result, dict):
+            valid = result.get("valid", result.get("is_valid", False))
+
+        if not valid:
+            continue
+
+        # Extract the leave details from the validate_leave arguments
+        leave_details = tc["args"].copy()
+        leave_details_json = json.dumps({
+            "leave_details": leave_details,
+            "employee_id": employee_id,
+            "role": role,
+        })
+
+        blocks.append({"type": "divider"})
+        blocks.append({
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Submit Leave"},
+                    "style": "primary",
+                    "action_id": "confirm_apply_btn",
+                    "value": leave_details_json,
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Cancel"},
+                    "style": "danger",
+                    "action_id": "cancel_apply_btn",
+                    "value": "cancel",
+                },
+            ],
+        })
+
+    return blocks
+
+
+def _format_policy_blocks(text_reply, tool_results):
+    """Format leave policy as readable sections."""
+    blocks = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": text_reply}},
+    ]
+
+    for tc in tool_results:
+        if tc["tool"] != "get_leave_policy":
+            continue
+        result = tc["result"]
+        if isinstance(result, dict) and result.get("error"):
+            continue
+
+        policies = result if isinstance(result, list) else result.get("leave_types", result.get("policies", [])) if isinstance(result, dict) else []
+        if not policies:
+            continue
+
+        blocks.append({"type": "divider"})
+
+        for policy in policies:
+            name = policy.get("name", policy.get("leave_type", "Unknown"))
+            code = policy.get("code", policy.get("leave_type_code", ""))
+            days = policy.get("days_per_year", policy.get("total_days", policy.get("annual_quota", "N/A")))
+            carry = policy.get("carry_forward", policy.get("can_carry_forward", False))
+            desc = policy.get("description", "")
+
+            policy_text = f"*{name}* (`{code}`)\n"
+            policy_text += f"Annual quota: `{days}` days"
+            if carry:
+                policy_text += " | Carry forward: Yes"
+            if desc:
+                policy_text += f"\n_{desc}_"
+
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": policy_text}})
+
+    return blocks
+
+
+def _format_apply_success_blocks(text_reply, tool_results):
+    """Format successful leave application as a confirmation block."""
+    blocks = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": text_reply}},
+    ]
+
+    for tc in tool_results:
+        if tc["tool"] != "apply_leave":
+            continue
+        result = tc["result"]
+        if isinstance(result, dict) and result.get("error"):
+            continue
+
+        blocks.append({"type": "divider"})
+        blocks.append({
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": "Leave request submitted successfully."}],
+        })
+
+    return blocks
+
+
+def _format_approval_success_blocks(text_reply, tool_results):
+    """Format approve/reject confirmation."""
+    blocks = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": text_reply}},
+    ]
+    return blocks
+
+
+def _build_response(text_reply, tool_calls_log, employee_id, role):
+    """Main router: check tool calls and return appropriate blocks or plain text."""
+    if not tool_calls_log:
+        return None
+
+    tool_names = [tc["tool"] for tc in tool_calls_log]
+
+    # Check for team requests with pending items
+    if "get_team_requests" in tool_names:
+        for tc in tool_calls_log:
+            if tc["tool"] == "get_team_requests":
+                result = tc["result"]
+                has_requests = False
+                if isinstance(result, list) and result:
+                    has_requests = True
+                elif isinstance(result, dict):
+                    reqs = result.get("requests", result.get("data", []))
+                    if reqs:
+                        has_requests = True
+                if has_requests:
+                    return _format_team_requests_blocks(text_reply, tool_calls_log, employee_id, role)
+
+    # Check for validate_leave with valid=true and no apply_leave called yet
+    if "validate_leave" in tool_names and "apply_leave" not in tool_names:
+        for tc in tool_calls_log:
+            if tc["tool"] == "validate_leave":
+                result = tc["result"]
+                if isinstance(result, dict) and result.get("valid", result.get("is_valid", False)):
+                    return _format_leave_confirm_blocks(text_reply, tool_calls_log, employee_id, role)
+
+    # Check for balance queries
+    if "get_my_balance" in tool_names or "get_team_balance" in tool_names:
+        return _format_balance_blocks(text_reply, tool_calls_log)
+
+    # Check for successful apply_leave
+    if "apply_leave" in tool_names:
+        for tc in tool_calls_log:
+            if tc["tool"] == "apply_leave":
+                result = tc["result"]
+                if isinstance(result, dict) and not result.get("error"):
+                    return _format_apply_success_blocks(text_reply, tool_calls_log)
+
+    # Check for leave policy
+    if "get_leave_policy" in tool_names:
+        return _format_policy_blocks(text_reply, tool_calls_log)
+
+    # Check for approve/reject actions
+    if "approve_leave" in tool_names or "reject_leave" in tool_names:
+        for tc in tool_calls_log:
+            if tc["tool"] in ("approve_leave", "reject_leave"):
+                result = tc["result"]
+                if isinstance(result, dict) and not result.get("error"):
+                    return _format_approval_success_blocks(text_reply, tool_calls_log)
+
+    return None
+
+
 # ── Conversation Engine ──
 
 def process_message(uid, text):
@@ -265,10 +550,12 @@ def process_message(uid, text):
     if not session['employee_id']:
         return ("Set a role first:\n• `/employee GIT-001` — login as employee\n"
                 "• `/hr` — login as HR admin\n• `/manager GIT-023` — login as manager\n\n"
-                "IDs: `GIT-001` Prithvi, `GIT-002` Meena, `GIT-023` Chandrakala, `GIT-046` Bhavishya")
+                "IDs: `GIT-001` Prithvi, `GIT-002` Meena, `GIT-023` Chandrakala, `GIT-046` Bhavishya"), None
 
     session['conversation'].append({"role": "user", "content": text})
     messages = [{"role": "system", "content": session['system_prompt']}] + session['conversation']
+
+    tool_calls_log = []
 
     for _ in range(10):
         try:
@@ -278,7 +565,7 @@ def process_message(uid, text):
                 tool_choice="auto" if session['openai_tools'] else None,
             )
         except Exception as e:
-            return f"LLM error: {e}"
+            return f"LLM error: {e}", None
 
         msg = resp.choices[0].message
 
@@ -294,15 +581,25 @@ def process_message(uid, text):
                 logger.info(f"Result: {result_str[:300]}")
 
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": result_str})
+
+                tool_calls_log.append({
+                    "tool": fname,
+                    "args": fargs,
+                    "result": result,
+                })
             continue
 
         reply = msg.content or "(no response)"
+
+        # Build rich response
+        blocks = _build_response(reply, tool_calls_log, session['employee_id'], session['role'])
+
         session['conversation'].append({"role": "assistant", "content": reply})
         if len(session['conversation']) > 40:
             session['conversation'] = session['conversation'][-20:]
-        return reply
+        return reply, blocks
 
-    return "Too many tool rounds. Try rephrasing."
+    return "Too many tool rounds. Try rephrasing.", None
 
 
 # ── Slash Commands ──
@@ -361,7 +658,11 @@ def on_message(event, say):
     text = event.get('text', '').strip()
     if not text:
         return
-    say(process_message(event['user'], text))
+    reply, blocks = process_message(event['user'], text)
+    if blocks:
+        say(text=reply, blocks=blocks)
+    else:
+        say(reply)
 
 
 @app.event("app_mention")
@@ -370,7 +671,293 @@ def on_mention(event, say):
     if not text:
         say("Use `/employee GIT-001`, `/hr`, or `/manager GIT-023` to set your role, then chat with me.")
         return
-    say(process_message(event['user'], text))
+    reply, blocks = process_message(event['user'], text)
+    if blocks:
+        say(text=reply, blocks=blocks)
+    else:
+        say(reply)
+
+
+# ── Interaction Handlers ──
+
+@app.action("approve_leave_btn")
+def handle_approve_leave(ack, body, client):
+    """Handle Approve button click — approve the leave request immediately."""
+    ack()
+    user_id = body["user"]["id"]
+    user_name = body["user"].get("real_name", body["user"].get("username", "Manager"))
+    action = body["actions"][0]
+    btn_data = json.loads(action["value"])
+
+    request_id = btn_data["request_id"]
+    employee_id = btn_data["employee_id"]
+    role = btn_data["role"]
+    emp_name = btn_data.get("employee_name", "Employee")
+
+    result = hrms_execute_tool(
+        "approve_leave",
+        {"request_id": request_id},
+        employee_id,
+        role,
+    )
+
+    # Update the original message to replace buttons with confirmation
+    channel = body["channel"]["id"]
+    message_ts = body["message"]["ts"]
+    original_blocks = body["message"].get("blocks", [])
+
+    # Find and replace the actions block that contained the clicked button
+    updated_blocks = []
+    for block in original_blocks:
+        if block.get("type") == "actions":
+            # Check if this actions block contains the approve/reject buttons for this request
+            elements = block.get("elements", [])
+            matching = any(
+                el.get("action_id") in ("approve_leave_btn", "reject_leave_btn")
+                and _btn_matches_request(el, request_id)
+                for el in elements
+            )
+            if matching:
+                if isinstance(result, dict) and not result.get("error"):
+                    updated_blocks.append({
+                        "type": "context",
+                        "elements": [{"type": "mrkdwn", "text": f"Approved by {user_name}"}],
+                    })
+                else:
+                    error_msg = result.get("error", "Unknown error") if isinstance(result, dict) else str(result)
+                    updated_blocks.append({
+                        "type": "context",
+                        "elements": [{"type": "mrkdwn", "text": f"Failed to approve: {error_msg}"}],
+                    })
+                continue
+        updated_blocks.append(block)
+
+    try:
+        client.chat_update(
+            channel=channel,
+            ts=message_ts,
+            text=body["message"].get("text", "Leave request updated"),
+            blocks=updated_blocks,
+        )
+    except Exception as e:
+        logger.error(f"Failed to update message after approve: {e}")
+
+
+@app.action("reject_leave_btn")
+def handle_reject_leave(ack, body, client):
+    """Handle Reject button click — open a modal for rejection reason."""
+    ack()
+    action = body["actions"][0]
+    btn_data = json.loads(action["value"])
+
+    # Include channel and message ts so the modal submission can update the original message
+    modal_metadata = json.dumps({
+        "request_id": btn_data["request_id"],
+        "employee_id": btn_data["employee_id"],
+        "role": btn_data["role"],
+        "employee_name": btn_data.get("employee_name", "Employee"),
+        "channel_id": body["channel"]["id"],
+        "message_ts": body["message"]["ts"],
+    })
+
+    try:
+        client.views_open(
+            trigger_id=body["trigger_id"],
+            view={
+                "type": "modal",
+                "callback_id": "reject_modal",
+                "private_metadata": modal_metadata,
+                "title": {"type": "plain_text", "text": "Reject Leave Request"},
+                "submit": {"type": "plain_text", "text": "Reject"},
+                "close": {"type": "plain_text", "text": "Cancel"},
+                "blocks": [
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"Rejecting leave request `{btn_data['request_id']}` for *{btn_data.get('employee_name', 'Employee')}*",
+                        },
+                    },
+                    {
+                        "type": "input",
+                        "block_id": "reject_reason_block",
+                        "label": {"type": "plain_text", "text": "Reason for rejection"},
+                        "element": {
+                            "type": "plain_text_input",
+                            "action_id": "reject_reason_input",
+                            "multiline": True,
+                            "placeholder": {"type": "plain_text", "text": "Enter the reason for rejecting this leave request..."},
+                        },
+                    },
+                ],
+            },
+        )
+    except Exception as e:
+        logger.error(f"Failed to open reject modal: {e}")
+
+
+@app.view("reject_modal")
+def handle_reject_modal(ack, body, client, view):
+    """Handle reject modal submission — execute reject and update the original message."""
+    ack()
+    user_name = body["user"].get("real_name", body["user"].get("username", "Manager"))
+
+    metadata = json.loads(view["private_metadata"])
+    request_id = metadata["request_id"]
+    employee_id = metadata["employee_id"]
+    role = metadata["role"]
+    emp_name = metadata.get("employee_name", "Employee")
+    channel_id = metadata["channel_id"]
+    message_ts = metadata["message_ts"]
+
+    reason = view["state"]["values"]["reject_reason_block"]["reject_reason_input"]["value"]
+
+    result = hrms_execute_tool(
+        "reject_leave",
+        {"request_id": request_id, "remarks": reason},
+        employee_id,
+        role,
+    )
+
+    # Fetch the original message to update it
+    try:
+        msg_resp = client.conversations_history(channel=channel_id, latest=message_ts, inclusive=True, limit=1)
+        original_blocks = msg_resp["messages"][0].get("blocks", []) if msg_resp["messages"] else []
+        original_text = msg_resp["messages"][0].get("text", "Leave request updated") if msg_resp["messages"] else "Leave request updated"
+    except Exception as e:
+        logger.error(f"Failed to fetch original message for reject update: {e}")
+        return
+
+    updated_blocks = []
+    for block in original_blocks:
+        if block.get("type") == "actions":
+            elements = block.get("elements", [])
+            matching = any(
+                el.get("action_id") in ("approve_leave_btn", "reject_leave_btn")
+                and _btn_matches_request(el, request_id)
+                for el in elements
+            )
+            if matching:
+                if isinstance(result, dict) and not result.get("error"):
+                    updated_blocks.append({
+                        "type": "context",
+                        "elements": [{"type": "mrkdwn", "text": f"Rejected by {user_name}: {reason}"}],
+                    })
+                else:
+                    error_msg = result.get("error", "Unknown error") if isinstance(result, dict) else str(result)
+                    updated_blocks.append({
+                        "type": "context",
+                        "elements": [{"type": "mrkdwn", "text": f"Failed to reject: {error_msg}"}],
+                    })
+                continue
+        updated_blocks.append(block)
+
+    try:
+        client.chat_update(
+            channel=channel_id,
+            ts=message_ts,
+            text=original_text,
+            blocks=updated_blocks,
+        )
+    except Exception as e:
+        logger.error(f"Failed to update message after reject: {e}")
+
+
+@app.action("confirm_apply_btn")
+def handle_confirm_apply(ack, body, client):
+    """Handle Submit Leave button click — apply the leave."""
+    ack()
+    action = body["actions"][0]
+    btn_data = json.loads(action["value"])
+
+    leave_details = btn_data["leave_details"]
+    employee_id = btn_data["employee_id"]
+    role = btn_data["role"]
+
+    result = hrms_execute_tool("apply_leave", leave_details, employee_id, role)
+
+    channel = body["channel"]["id"]
+    message_ts = body["message"]["ts"]
+    original_blocks = body["message"].get("blocks", [])
+
+    # Replace the actions block with the result
+    updated_blocks = []
+    for block in original_blocks:
+        if block.get("type") == "actions":
+            elements = block.get("elements", [])
+            matching = any(
+                el.get("action_id") in ("confirm_apply_btn", "cancel_apply_btn")
+                for el in elements
+            )
+            if matching:
+                if isinstance(result, dict) and not result.get("error"):
+                    updated_blocks.append({
+                        "type": "context",
+                        "elements": [{"type": "mrkdwn", "text": "Leave request submitted successfully."}],
+                    })
+                else:
+                    error_msg = result.get("error", "Unknown error") if isinstance(result, dict) else str(result)
+                    updated_blocks.append({
+                        "type": "context",
+                        "elements": [{"type": "mrkdwn", "text": f"Failed to submit leave: {error_msg}"}],
+                    })
+                continue
+        updated_blocks.append(block)
+
+    try:
+        client.chat_update(
+            channel=channel,
+            ts=message_ts,
+            text=body["message"].get("text", "Leave application updated"),
+            blocks=updated_blocks,
+        )
+    except Exception as e:
+        logger.error(f"Failed to update message after apply: {e}")
+
+
+@app.action("cancel_apply_btn")
+def handle_cancel_apply(ack, body, client):
+    """Handle Cancel button click — cancel the leave application."""
+    ack()
+    channel = body["channel"]["id"]
+    message_ts = body["message"]["ts"]
+    original_blocks = body["message"].get("blocks", [])
+
+    # Replace the actions block with a cancellation notice
+    updated_blocks = []
+    for block in original_blocks:
+        if block.get("type") == "actions":
+            elements = block.get("elements", [])
+            matching = any(
+                el.get("action_id") in ("confirm_apply_btn", "cancel_apply_btn")
+                for el in elements
+            )
+            if matching:
+                updated_blocks.append({
+                    "type": "context",
+                    "elements": [{"type": "mrkdwn", "text": "Leave application cancelled."}],
+                })
+                continue
+        updated_blocks.append(block)
+
+    try:
+        client.chat_update(
+            channel=channel,
+            ts=message_ts,
+            text="Leave application cancelled.",
+            blocks=updated_blocks,
+        )
+    except Exception as e:
+        logger.error(f"Failed to update message after cancel: {e}")
+
+
+def _btn_matches_request(element, request_id):
+    """Check if a button element's value matches a given request_id."""
+    try:
+        data = json.loads(element.get("value", "{}"))
+        return data.get("request_id") == request_id
+    except (json.JSONDecodeError, TypeError):
+        return False
 
 
 # ── Start ──
