@@ -70,16 +70,13 @@ services:
 
   slack:
     build:
-      context: ./slack_connector
+      context: ./connectors/slack
       dockerfile: Dockerfile
     environment:
       - HRMS_API_URL=http://api:8000
-      - XLAM_API_URL=http://host.docker.internal:8081/v1
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
       - SLACK_APP_TOKEN=${SLACK_APP_TOKEN}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     depends_on:
       - api
     restart: unless-stopped
