@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     'employees',
     'leaves',
     'bot',
+    'notifications',
 ]
 
 MIDDLEWARE = [

@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gamyam HRMS — Activity Feed</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; color: #333; }
+  .header { background: #1a1a2e; color: white; padding: 20px 30px; display: flex; justify-content: space-between; align-items: center; }
+  .header h1 { font-size: 20px; font-weight: 600; }
+  .header .nav { display: flex; gap: 15px; }
+  .header .nav a { color: #aaa; text-decoration: none; font-size: 14px; }
+  .header .nav a.active { color: white; }
+  .container { max-width: 900px; margin: 20px auto; padding: 0 20px; }
+  .filters { background: white; border-radius: 8px; padding: 16px 20px; margin-bottom: 20px; display: flex; gap: 12px; align-items: center; box-shadow: 0 1px 3px rgba(0,0,0,0.1); flex-wrap: wrap; }
+  .filters label { font-size: 13px; color: #666; font-weight: 500; }
+  .filters select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; background: white; }
+  .stats { display: flex; gap: 15px; margin-bottom: 20px; }
+  .stat-card { background: white; border-radius: 8px; padding: 16px 20px; flex: 1; box-shadow: 0 1px 3px rgba(0,0,0,0.1); text-align: center; }
+  .stat-card .number { font-size: 28px; font-weight: 700; color: #1a1a2e; }
+  .stat-card .label { font-size: 12px; color: #888; margin-top: 4px; }
+  .feed { display: flex; flex-direction: column; gap: 8px; }
+  .activity-item { background: white; border-radius: 8px; padding: 14px 18px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); display: flex; align-items: flex-start; gap: 12px; }
+  .activity-icon { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
+  .activity-icon.applied { background: #e3f2fd; }
+  .activity-icon.approved { background: #e8f5e9; }
+  .activity-icon.rejected { background: #fce4ec; }
+  .activity-icon.cancelled { background: #fff3e0; }
+  .activity-icon.policy { background: #f3e5f5; }
+  .activity-icon.employee { background: #e0f2f1; }
+  .activity-icon.balance { background: #fff8e1; }
+  .activity-body { flex: 1; }
+  .activity-title { font-size: 14px; line-height: 1.4; }
+  .activity-title strong { font-weight: 600; }
+  .activity-meta { font-size: 12px; color: #999; margin-top: 4px; }
+  .activity-badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 500; }
+  .badge-applied { background: #e3f2fd; color: #1565c0; }
+  .badge-approved { background: #e8f5e9; color: #2e7d32; }
+  .badge-rejected { background: #fce4ec; color: #c62828; }
+  .badge-cancelled { background: #fff3e0; color: #e65100; }
+  .badge-policy { background: #f3e5f5; color: #7b1fa2; }
+  .badge-hr { background: #e0f2f1; color: #00695c; }
+  .empty { text-align: center; padding: 40px; color: #999; }
+  .loading { text-align: center; padding: 40px; color: #666; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Activity Feed</h1>
+  <div class="nav">
+    <a href="/dashboard/approve/">Approvals</a>
+    <a href="/dashboard/activity/" class="active">Activity</a>
+  </div>
+</div>
+
+<div class="container">
+  <div class="filters">
+    <div>
+      <label>View as</label><br>
+      <select id="viewSelect">
+        <option value="hr">HR (All Activity)</option>
+        <option value="manager">Manager</option>
+        <option value="employee">Employee</option>
+      </select>
+    </div>
+    <div id="personFilter" style="display:none">
+      <label id="personLabel">Select</label><br>
+      <select id="personSelect"></select>
+    </div>
+    <div>
+      <label>Event Type</label><br>
+      <select id="eventFilter">
+        <option value="">All Events</option>
+        <option value="LEAVE_APPLIED">Leave Applied</option>
+        <option value="LEAVE_APPROVED">Leave Approved</option>
+        <option value="LEAVE_REJECTED">Leave Rejected</option>
+        <option value="LEAVE_CANCELLED">Leave Cancelled</option>
+        <option value="BALANCE_ADJUSTED">Balance Adjusted</option>
+        <option value="POLICY_CHANGED">Policy Changed</option>
+        <option value="EMPLOYEE_ADDED">Employee Added</option>
+        <option value="EMPLOYEE_CONFIRMED">Employee Confirmed</option>
+        <option value="EMPLOYEE_DEACTIVATED">Employee Deactivated</option>
+        <option value="EMPLOYEE_TRANSFERRED">Employee Transferred</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat-card"><div class="number" id="statToday">-</div><div class="label">Today</div></div>
+    <div class="stat-card"><div class="number" id="statWeek">-</div><div class="label">This Week</div></div>
+    <div class="stat-card"><div class="number" id="statPending">-</div><div class="label">Pending Approvals</div></div>
+  </div>
+
+  <div class="feed" id="feed">
+    <div class="loading">Loading activity...</div>
+  </div>
+</div>
+
+<script>
+const ICON_MAP = {
+  LEAVE_APPLIED: ['applied', '📝'],
+  LEAVE_APPROVED: ['approved', '✅'],
+  LEAVE_REJECTED: ['rejected', '❌'],
+  LEAVE_CANCELLED: ['cancelled', '↩️'],
+  BALANCE_ADJUSTED: ['balance', '⚖️'],
+  POLICY_CHANGED: ['policy', '📋'],
+  OVERRIDE_CREATED: ['policy', '🔒'],
+  OVERRIDE_REMOVED: ['policy', '🔓'],
+  EMPLOYEE_ADDED: ['employee', '👤'],
+  EMPLOYEE_CONFIRMED: ['employee', '✅'],
+  EMPLOYEE_DEACTIVATED: ['employee', '👋'],
+  EMPLOYEE_TRANSFERRED: ['employee', '🔄'],
+};
+
+const BADGE_MAP = {
+  LEAVE_APPLIED: 'badge-applied',
+  LEAVE_APPROVED: 'badge-approved',
+  LEAVE_REJECTED: 'badge-rejected',
+  LEAVE_CANCELLED: 'badge-cancelled',
+  BALANCE_ADJUSTED: 'badge-hr',
+  POLICY_CHANGED: 'badge-policy',
+};
+
+function timeAgo(dateStr) {
+  const now = new Date();
+  const then = new Date(dateStr);
+  const diff = Math.floor((now - then) / 1000);
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+  return Math.floor(diff / 86400) + 'd ago';
+}
+
+async function loadManagers() {
+  const resp = await fetch('/dashboard/api/managers/');
+  const data = await resp.json();
+  return data.managers || [];
+}
+
+async function loadEmployees() {
+  const resp = await fetch('/api/v1/employees/');
+  const data = await resp.json();
+  return Array.isArray(data) ? data : [];
+}
+
+async function loadStats() {
+  const resp = await fetch('/dashboard/activity/api/stats/');
+  const data = await resp.json();
+  document.getElementById('statToday').textContent = data.today || 0;
+  document.getElementById('statWeek').textContent = data.this_week || 0;
+  document.getElementById('statPending').textContent = data.pending_approvals || 0;
+}
+
+async function loadFeed() {
+  const view = document.getElementById('viewSelect').value;
+  const eventType = document.getElementById('eventFilter').value;
+  const personId = document.getElementById('personSelect').value;
+
+  let url = `/dashboard/activity/api/feed/?view=${view}`;
+  if (eventType) url += `&event_type=${eventType}`;
+  if (view === 'manager' && personId) url += `&manager_id=${personId}`;
+  if (view === 'employee' && personId) url += `&employee_id=${personId}`;
+
+  const resp = await fetch(url);
+  const data = await resp.json();
+  const feed = document.getElementById('feed');
+
+  if (!data.activities || data.activities.length === 0) {
+    feed.innerHTML = '<div class="empty">No activity yet. Events will appear here as actions happen.</div>';
+    return;
+  }
+
+  feed.innerHTML = data.activities.map(a => {
+    const [iconClass, emoji] = ICON_MAP[a.event_type] || ['employee', '📌'];
+    const badgeClass = BADGE_MAP[a.event_type] || 'badge-hr';
+    const typeName = a.event_type.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+    return `
+      <div class="activity-item">
+        <div class="activity-icon ${iconClass}">${emoji}</div>
+        <div class="activity-body">
+          <div class="activity-title">${a.title}</div>
+          <div class="activity-meta">
+            <span class="activity-badge ${badgeClass}">${typeName}</span>
+            &nbsp; ${timeAgo(a.created_at)}
+            ${a.target_id ? ' &middot; ' + a.target_id : ''}
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+document.getElementById('viewSelect').addEventListener('change', async function() {
+  const view = this.value;
+  const pf = document.getElementById('personFilter');
+  const ps = document.getElementById('personSelect');
+  const pl = document.getElementById('personLabel');
+
+  if (view === 'hr') {
+    pf.style.display = 'none';
+  } else if (view === 'manager') {
+    pf.style.display = 'block';
+    pl.textContent = 'Manager';
+    const managers = await loadManagers();
+    ps.innerHTML = '<option value="">All Managers</option>' +
+      managers.map(m => `<option value="${m.employee_id}">${m.full_name} (${m.report_count} reports)</option>`).join('');
+  } else {
+    pf.style.display = 'block';
+    pl.textContent = 'Employee';
+    const emps = await loadEmployees();
+    ps.innerHTML = '<option value="">All Employees</option>' +
+      emps.map(e => `<option value="${e.employee_id}">${e.full_name} (${e.employee_id})</option>`).join('');
+  }
+  loadFeed();
+});
+
+document.getElementById('personSelect').addEventListener('change', loadFeed);
+document.getElementById('eventFilter').addEventListener('change', loadFeed);
+
+// Initial load
+loadStats();
+loadFeed();
+// Auto-refresh every 30s
+setInterval(() => { loadStats(); loadFeed(); }, 30000);
+</script>
+
+</body>
+</html>
