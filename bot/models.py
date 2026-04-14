@@ -78,22 +78,29 @@ class PipelineStep(models.Model):
     """A single step in the pipeline. Steps are executed in order.
 
     Step types:
-    - system_prompt: Sets the system prompt for the conversation. No LLM call.
-                     Uses the prompt template with employee context variables.
-                     Use role_filter to have different prompts per role.
-    - tool_call:     Sends message + tools to LLM, executes returned tool calls.
-                     Can loop for multiple rounds (config.max_rounds).
-    - reply:         Sends message to LLM without tools, returns text response.
-                     Use prompt to shape the reply style.
-    - classify:      Classifies the message intent. Can route to different paths.
-    - validate:      Validates tool call results before proceeding.
+    - system_prompt: Sets the system prompt. No LLM call. Uses prompt template with employee variables.
+                     Use role_filter for different prompts per role.
+    - classify:      Classifies user intent. Routes to simple or complex path.
+                     Config: {"simple_intents": [...], "complex_intents": [...]}
+    - plan:          Plans which tools to call for complex intents. Returns JSON tool plan.
+                     Config: {"skip_for_simple": true}
+    - tool_call:     Executes tool calls. Either from a plan (complex) or via LLM loop (simple).
+                     Config: {"max_rounds": 10, "tool_choice": "auto", "retry_on_error": true}
+    - generate:      Generates response from tool results. Focused prompt, no tools.
+                     Config: {"skip_for_simple": true, "max_tokens": 500}
+    - validate:      Reviews the generated response for quality. Returns APPROVED or REDO.
+                     Config: {"skip_for_simple": true, "max_retries": 1}
+    - reply:         All-in-one: tool calls + reply in single LLM loop. Used for simple path.
+                     Config: {"max_rounds": 10}
     """
     STEP_TYPE_CHOICES = [
         ('system_prompt', 'System Prompt'),
-        ('tool_call', 'Tool Call'),
-        ('reply', 'Reply'),
         ('classify', 'Classify'),
-        ('validate', 'Validate'),
+        ('plan', 'Tool Planning'),
+        ('tool_call', 'Tool Call'),
+        ('generate', 'Response Generation'),
+        ('validate', 'Review & Validate'),
+        ('reply', 'Reply (tool call + reply in one)'),
     ]
 
     ROLE_FILTER_CHOICES = [

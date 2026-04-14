@@ -13,6 +13,7 @@ import os
 import json
 import logging
 import re
+import time
 import requests
 from datetime import date
 from slack_bolt import App
@@ -30,91 +31,44 @@ logger = logging.getLogger('slack_connector')
 
 sessions = {}
 
-# ── Production System Prompts ──
-
-EMPLOYEE_PROMPT = """You are Gamyam's leave assistant for {name} ({emp_id}).
-Department: {dept} | Role: {designation} | Manager: {manager}
-Today: {today} | Leave year: {leave_year} (Apr {leave_year} – Mar {next_year})
-
-RULES — NEVER BREAK THESE:
-1. ONLY discuss leave management. Anything else: "I only handle leave management."
-2. NEVER fabricate data. If a tool returns empty or errors, say so plainly.
-3. NEVER skip validation. Call validate_leave before apply_leave. No exceptions.
-4. NEVER auto-submit. Confirm with the user before calling apply_leave.
-5. Use leave type CODES: SL=Sick, PL=Planned/Casual, EL=Earned, LOP=Loss of Pay, WFH=Work From Home, BL=Bereavement, ML=Maternity, PtL=Paternity, OH=Optional Holiday.
-6. All dates in YYYY-MM-DD format when calling tools.
-7. If is_half_day, always ask AM or PM.
-8. Generate idempotency_key as: {emp_id}_action_{today}_XXXX (random 4 chars).
-
-HANDLING REQUESTS:
-- "What's my balance?" → call get_my_balance, present each type with available days.
-- "Apply leave" → identify type from context (sick/unwell→SL, planned/vacation→PL, WFH→WFH), confirm dates, call get_my_balance to check, call validate_leave, confirm with user, then apply_leave.
-- "Cancel leave" → call get_my_requests to find it, confirm, then cancel_leave.
-- "Policy question" → call get_leave_policy, explain in plain English.
-- If insufficient balance, suggest alternatives (split across types, or use LOP).
-- If validation fails, explain why and suggest fixes.
-
-INTERACTIVE BUTTONS appear automatically after validate_leave succeeds. Do NOT describe buttons in text — just present clear data.
-
-Be concise, friendly. Use their first name."""
-
-MANAGER_PROMPT = """You are Gamyam's leave assistant for {name} ({emp_id}), a manager.
-Department: {dept} | Role: {designation}
-Today: {today} | Leave year: {leave_year}
-
-RULES — NEVER BREAK THESE:
-1. ONLY discuss leave management.
-2. NEVER fabricate data. Only state facts from tool results.
-3. NEVER approve without showing details first. Display the request, then ask for confirmation.
-4. NEVER reject without a reason. Insist: "I need a reason — the employee will see it."
-5. Use the 'id' field from get_team_requests as request_id for approve/reject. NEVER guess IDs.
-6. NEVER modify policies or create overrides. Say: "That's an HR function."
-7. Generate idempotency_key as: MGR_{emp_id}_action_{today}_XXXX.
-
-HANDLING REQUESTS:
-- "What's pending?" → call get_team_requests(status=PENDING), list each with employee name, type, dates, reason.
-- "Approve" → show details first, confirm, then call approve_leave.
-- "Approve all" → list all pending, confirm, then approve each.
-- "Reject" → ask for reason, then call reject_leave with remarks.
-- "Team calendar" → call get_team_calendar with date range.
-- "Team balance" → call get_team_balance, highlight anyone running low.
-- Own leave → same flow as employee.
-
-INTERACTIVE BUTTONS: Approve/Reject buttons appear automatically on pending request cards. Do NOT describe buttons in text.
-
-Be professional, brief. Present info in scannable format."""
-
-ADMIN_PROMPT = """You are Gamyam's HRMS assistant for {name} ({emp_id}), an HR administrator.
-Today: {today} | Leave year: {leave_year}
-
-You have FULL access to all 48 tools: leave policy management, employee management, overrides, balance adjustments, org structure, bulk operations, system operations, and HR action queue.
-
-RULES — NEVER BREAK THESE:
-1. ONLY discuss HRMS operations.
-2. NEVER fabricate data. Only state facts from tool results.
-3. NEVER auto-execute destructive actions. ALWAYS confirm before: policy changes, bulk overrides, balance adjustments, year-end processing, employee deactivation.
-4. For policy changes, ALWAYS ask: "Prospective (next cycle) or retroactive (adjust current balances)?"
-5. Before creating overrides, call get_overrides first to check for conflicts.
-6. NEVER run year-end without dry_run=true first.
-7. Generate idempotency_key as: HR_{emp_id}_action_{today}_XXXX.
-
-CLASSIFY REQUESTS:
-- "Change SL to 10 days" → update_leave_type (affects everyone)
-- "Block Prithvi's WFH" → create_override (one person)
-- "Give Meena 2 extra EL" → adjust_balance (one-time credit)
-- "New employee joined" → add_employee
-- "Move Prithvi to Sales" → transfer_employee
-- "Who's on leave today?" → get_all_requests
-- "Run year-end" → trigger_year_end (dry_run first!)
-- If ambiguous, ask: "Do you mean for one person (override) or everyone (policy change)?"
-
-INTERACTIVE BUTTONS appear automatically on approval cards and confirmations. Do NOT describe buttons in text.
-
-When tool results are empty, say so clearly: "No leave types configured yet. Want me to create one?"
-Be efficient, professional. Summarize, don't dump raw data. Flag side effects proactively."""
-
 app = App(token=SLACK_BOT_TOKEN)
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
+
+
+# ── Pipeline Config Cache ──
+
+_pipeline_cache = {'data': None, 'ts': 0}
+
+
+def _get_pipeline_config():
+    now = time.time()
+    if _pipeline_cache['data'] and (now - _pipeline_cache['ts']) < 60:
+        return _pipeline_cache['data']
+    try:
+        resp = requests.get(f'{HRMS_API_URL}/api/v1/bot/config/', timeout=5)
+        if resp.status_code == 200:
+            _pipeline_cache['data'] = resp.json()
+            _pipeline_cache['ts'] = now
+    except Exception as e:
+        logger.warning(f"Failed to fetch pipeline config: {e}")
+    return _pipeline_cache.get('data')
+
+
+# ── LLM Client Helper ──
+
+_llm_clients = {}
+
+
+def _get_llm_client(provider_config):
+    if not provider_config:
+        return openai_client
+    key = provider_config.get('api_url', '') or 'openai'
+    if key not in _llm_clients:
+        if provider_config['provider_type'] == 'openai':
+            _llm_clients[key] = openai_client
+        else:
+            _llm_clients[key] = OpenAI(api_key='not-needed', base_url=provider_config['api_url'])
+    return _llm_clients[key]
 
 
 # ── HRMS API Client ──
@@ -249,30 +203,41 @@ def build_system_prompt(role, emp):
     leave_year = str(date.today().year) if date.today().month >= 4 else str(date.today().year - 1)
     next_year = str(int(leave_year) + 1)
 
-    fmt = dict(
-        name=name, emp_id=emp_id, dept=dept_name, designation=desg_name,
-        manager=mgr_name, today=today, leave_year=leave_year, next_year=next_year,
-    )
+    config = _get_pipeline_config()
+    if not config or not config.get('pipeline'):
+        return f"You are an HRMS assistant. Today: {today}."
 
-    if role == 'ADMIN':
-        prompt = ADMIN_PROMPT.format(**fmt)
-        # For admin, add dynamic context about configured leave types
-        try:
-            resp = requests.get(f'{HRMS_API_URL}/api/v1/leaves/policy/', timeout=5)
-            if resp.status_code == 200:
-                types = resp.json()
-                if types:
-                    type_list = ', '.join(f"{t['code']}" for t in types)
-                    prompt += f"\n\nActive leave types: {type_list}"
-                else:
-                    prompt += "\n\nNo leave types configured yet. HR may want to create them."
-        except Exception:
-            pass
-        return prompt
-    elif role == 'MANAGER':
-        return MANAGER_PROMPT.format(**fmt)
-    else:
-        return EMPLOYEE_PROMPT.format(**fmt)
+    for step in config['pipeline']['steps']:
+        if step['step_type'] == 'system_prompt' and step.get('role_filter') == role:
+            if step.get('prompt') and step['prompt'].get('template'):
+                template = step['prompt']['template']
+                try:
+                    prompt = template.format(
+                        name=name, emp_id=emp_id, dept=dept_name,
+                        designation=desg_name, manager=mgr_name,
+                        today=today, leave_year=leave_year,
+                        next_year=next_year, role=role,
+                    )
+                except KeyError:
+                    continue
+
+                # For admin, add dynamic context about configured leave types
+                if role == 'ADMIN':
+                    try:
+                        resp = requests.get(f'{HRMS_API_URL}/api/v1/leaves/policy/', timeout=5)
+                        if resp.status_code == 200:
+                            types = resp.json()
+                            if types:
+                                type_list = ', '.join(f"{t['code']}" for t in types)
+                                prompt += f"\n\nActive leave types: {type_list}"
+                            else:
+                                prompt += "\n\nNo leave types configured yet. HR may want to create them."
+                    except Exception:
+                        pass
+
+                return prompt
+
+    return f"You are an HRMS assistant. Today: {today}."
 
 
 def to_openai_tools(tools):
@@ -607,6 +572,208 @@ def _build_response(text_reply, tool_calls_log, employee_id, role):
     return None
 
 
+# ── Pipeline Step Executors ──
+
+def _execute_classify_step(step, text, role):
+    """Execute a classify step. Returns the intent string."""
+    client = _get_llm_client(step.get('llm_provider'))
+    model = step['llm_provider']['model_id'] if step.get('llm_provider') else OPENAI_MODEL
+    config = step.get('config', {})
+    template = step.get('prompt', {}).get('template', '')
+
+    prompt = template.format(
+        role=role, user_message=text,
+        name='', emp_id='', dept='', designation='',
+        manager='', today=date.today().isoformat(),
+        leave_year='2026', tool_results='', previous_output='',
+    )
+
+    resp = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=config.get('max_tokens', 20),
+        temperature=config.get('temperature', 0),
+    )
+    return resp.choices[0].message.content.strip().upper().replace(' ', '_')
+
+
+def _execute_reply_step(step, messages, session):
+    """Execute a reply step (all-in-one tool call + reply loop). Returns (reply, tool_calls_log)."""
+    client = _get_llm_client(step.get('llm_provider'))
+    model = step['llm_provider']['model_id'] if step.get('llm_provider') else OPENAI_MODEL
+    config = step.get('config', {})
+    tool_calls_log = []
+
+    for _ in range(config.get('max_rounds', 10)):
+        resp = client.chat.completions.create(
+            model=model, messages=messages,
+            tools=session['openai_tools'] or None,
+            tool_choice=config.get('tool_choice', 'auto') if session['openai_tools'] else None,
+        )
+        msg = resp.choices[0].message
+        if msg.tool_calls:
+            messages.append(msg)
+            for tc in msg.tool_calls:
+                fname = tc.function.name
+                fargs = json.loads(tc.function.arguments)
+                logger.info(f"Tool: {fname}({json.dumps(fargs)[:200]})")
+                result = hrms_execute_tool(fname, fargs, session['employee_id'], session['role'])
+                result_str = json.dumps(result, default=str)
+                logger.info(f"Result: {result_str[:300]}")
+                messages.append({"role": "tool", "tool_call_id": tc.id, "content": result_str})
+                tool_calls_log.append({"tool": fname, "args": fargs, "result": result})
+            continue
+        return msg.content or "(no response)", tool_calls_log
+
+    return "Too many tool rounds.", tool_calls_log
+
+
+def _execute_plan_step(step, text, intent, role, session):
+    """Execute a plan step. Returns list of planned tool calls."""
+    client = _get_llm_client(step.get('llm_provider'))
+    model = step['llm_provider']['model_id'] if step.get('llm_provider') else OPENAI_MODEL
+    config = step.get('config', {})
+    template = step.get('prompt', {}).get('template', '')
+    tool_names = [t['name'] for t in session['tools']]
+
+    prompt = template.format(
+        role=role, user_message=text, intent=intent,
+        tool_names=', '.join(tool_names), today=date.today().isoformat(),
+        name='', emp_id='', dept='', designation='', manager='',
+        leave_year='2026', tool_results='', previous_output='',
+    )
+
+    resp = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=config.get('max_tokens', 500),
+        temperature=config.get('temperature', 0),
+    )
+    content = resp.choices[0].message.content.strip()
+    # Extract JSON from possible markdown code block
+    if '```' in content:
+        content = content.split('```')[1]
+        if content.startswith('json'):
+            content = content[4:]
+        content = content.strip()
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        logger.error(f"Failed to parse tool plan: {content[:200]}")
+        return []
+
+
+def _execute_tool_call_step(step, plan, employee_id, role):
+    """Execute tool calls from a plan with error retry. Returns tool_calls_log."""
+    config = step.get('config', {})
+    retry = config.get('retry_on_error', True)
+    max_retries = config.get('max_retries', 3)
+    fix_template = step.get('prompt', {}).get('template', '')
+    tool_calls_log = []
+
+    for planned in plan:
+        tool_name = planned.get('tool', '')
+        args = planned.get('args', {})
+
+        for attempt in range(max_retries if retry else 1):
+            result = hrms_execute_tool(tool_name, args, employee_id, role)
+            logger.info(f"Tool: {tool_name}({json.dumps(args)[:150]}) -> {json.dumps(result, default=str)[:200]}")
+
+            if not isinstance(result, dict) or 'error' not in result:
+                break  # Success
+
+            if attempt < (max_retries - 1) and retry and fix_template:
+                # Ask LLM to fix args
+                try:
+                    client = _get_llm_client(step.get('llm_provider'))
+                    model = step['llm_provider']['model_id'] if step.get('llm_provider') else OPENAI_MODEL
+                    fix_prompt = fix_template.format(
+                        tool_name=tool_name, error=result['error'],
+                        tool_results=json.dumps(args),
+                        user_message='', name='', emp_id='', dept='', designation='',
+                        manager='', today='', leave_year='', role='', previous_output='',
+                    )
+                    fix_resp = client.chat.completions.create(
+                        model=model, messages=[{"role": "user", "content": fix_prompt}],
+                        max_tokens=200, temperature=0,
+                    )
+                    fixed = fix_resp.choices[0].message.content.strip()
+                    if '```' in fixed:
+                        fixed = fixed.split('```')[1]
+                        if fixed.startswith('json'):
+                            fixed = fixed[4:]
+                        fixed = fixed.strip()
+                    args = json.loads(fixed)
+                    logger.info(f"Retry {tool_name} with fixed args: {json.dumps(args)[:200]}")
+                except Exception:
+                    pass
+
+        tool_calls_log.append({"tool": tool_name, "args": args, "result": result})
+
+    return tool_calls_log
+
+
+def _execute_generate_step(step, text, tool_calls_log, session, feedback=None):
+    """Generate response from tool results."""
+    client = _get_llm_client(step.get('llm_provider'))
+    model = step['llm_provider']['model_id'] if step.get('llm_provider') else OPENAI_MODEL
+    config = step.get('config', {})
+    template = step.get('prompt', {}).get('template', '')
+
+    tool_results_str = "\n".join(
+        f"{tc['tool']}: {json.dumps(tc['result'], default=str)[:500]}"
+        for tc in tool_calls_log)
+
+    feedback_line = f"\nFEEDBACK: {feedback}\nFix the issues above.\n" if feedback else ""
+
+    prompt = template.format(
+        user_message=text, tool_results=tool_results_str or "(no tools called)",
+        name=session.get('name', 'User'), role=session.get('role', 'EMPLOYEE'),
+        previous_output=feedback_line,
+        emp_id='', dept='', designation='', manager='',
+        today=date.today().isoformat(), leave_year='2026',
+    )
+
+    resp = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "system", "content": session['system_prompt']},
+                  {"role": "user", "content": prompt}],
+        max_tokens=config.get('max_tokens', 500),
+    )
+    return resp.choices[0].message.content or "(no response)"
+
+
+def _execute_validate_step(step, text, tool_calls_log, response):
+    """Review response quality. Returns (approved, feedback)."""
+    client = _get_llm_client(step.get('llm_provider'))
+    model = step['llm_provider']['model_id'] if step.get('llm_provider') else OPENAI_MODEL
+    config = step.get('config', {})
+    template = step.get('prompt', {}).get('template', '')
+
+    tool_results_str = "\n".join(
+        f"{tc['tool']}: {json.dumps(tc['result'], default=str)[:500]}"
+        for tc in tool_calls_log)
+
+    prompt = template.format(
+        user_message=text, tool_results=tool_results_str,
+        previous_output=response,
+        name='', emp_id='', dept='', designation='', manager='',
+        today='', leave_year='', role='',
+    )
+
+    resp = client.chat.completions.create(
+        model=model, messages=[{"role": "user", "content": prompt}],
+        max_tokens=100, temperature=config.get('temperature', 0),
+    )
+
+    verdict = resp.choices[0].message.content.strip()
+    if verdict.startswith("APPROVED"):
+        return True, None
+    elif verdict.startswith("REDO"):
+        return False, verdict[5:].strip().lstrip(':').strip()
+    return True, None
+
+
 # ── Conversation Engine ──
 
 def process_message(uid, text):
@@ -619,63 +786,155 @@ def process_message(uid, text):
     session['conversation'].append({"role": "user", "content": text})
     messages = [{"role": "system", "content": session['system_prompt']}] + session['conversation']
 
-    tool_calls_log = []
-    total_tokens = 0
+    config = _get_pipeline_config()
+    if not config or not config.get('pipeline'):
+        # No pipeline configured — fall back to simple GPT-4o loop
+        logger.warning("No pipeline config available, using fallback GPT-4o loop")
+        tool_calls_log = []
+        for _ in range(10):
+            try:
+                resp = openai_client.chat.completions.create(
+                    model=OPENAI_MODEL, messages=messages,
+                    tools=session['openai_tools'] or None,
+                    tool_choice="auto" if session['openai_tools'] else None,
+                )
+            except Exception as e:
+                return f"LLM error: {e}", None
+            msg = resp.choices[0].message
+            if msg.tool_calls:
+                messages.append(msg)
+                for tc in msg.tool_calls:
+                    fname = tc.function.name
+                    fargs = json.loads(tc.function.arguments)
+                    logger.info(f"Tool: {fname}({json.dumps(fargs)[:200]})")
+                    result = hrms_execute_tool(fname, fargs, session['employee_id'], session['role'])
+                    result_str = json.dumps(result, default=str)
+                    logger.info(f"Result: {result_str[:300]}")
+                    messages.append({"role": "tool", "tool_call_id": tc.id, "content": result_str})
+                    tool_calls_log.append({"tool": fname, "args": fargs, "result": result})
+                continue
+            reply = msg.content or "(no response)"
+            blocks = _build_response(reply, tool_calls_log, session['employee_id'], session['role'])
+            session['conversation'].append({"role": "assistant", "content": reply})
+            if len(session['conversation']) > 40:
+                keep = [m for m in session['conversation'][:-30] if isinstance(m, dict) and m.get('role') == 'tool']
+                session['conversation'] = keep + session['conversation'][-30:]
+            return reply, blocks
+        return "Too many tool rounds. Try rephrasing.", None
 
-    for _ in range(10):
-        try:
-            resp = openai_client.chat.completions.create(
-                model=OPENAI_MODEL, messages=messages,
-                tools=session['openai_tools'] or None,
-                tool_choice="auto" if session['openai_tools'] else None,
-            )
-        except Exception as e:
-            return f"LLM error: {e}", None
+    steps = config['pipeline']['steps']
+    role = session['role']
 
-        if hasattr(resp, 'usage') and resp.usage:
-            total_tokens += resp.usage.total_tokens
+    # Filter steps for this role (include steps with no role_filter or matching role)
+    active_steps = [s for s in steps if not s.get('role_filter') or s.get('role_filter') == role]
 
-        msg = resp.choices[0].message
+    ctx = {'intent': None, 'path': 'simple', 'plan': [], 'tool_calls_log': [], 'reply': None}
 
-        if msg.tool_calls:
-            messages.append(msg)
-            for tc in msg.tool_calls:
-                fname = tc.function.name
-                fargs = json.loads(tc.function.arguments)
-                logger.info(f"Tool: {fname}({json.dumps(fargs)[:200]})")
+    for step in active_steps:
+        step_type = step['step_type']
 
-                result = hrms_execute_tool(fname, fargs, session['employee_id'], session['role'])
-                result_str = json.dumps(result, default=str)
-                logger.info(f"Result: {result_str[:300]}")
+        if step_type == 'system_prompt':
+            continue  # Already handled in build_system_prompt
 
-                messages.append({"role": "tool", "tool_call_id": tc.id, "content": result_str})
+        elif step_type == 'classify':
+            try:
+                ctx['intent'] = _execute_classify_step(step, text, role)
+                logger.info(f"Pipeline: intent={ctx['intent']}")
+                simple_intents = set(step.get('config', {}).get('simple_intents', []))
+                complex_intents = set(step.get('config', {}).get('complex_intents', []))
+                if ctx['intent'] in complex_intents:
+                    ctx['path'] = 'complex'
+                else:
+                    ctx['path'] = 'simple'
+                logger.info(f"Pipeline: path={ctx['path']}")
+            except Exception as e:
+                logger.error(f"Classify failed: {e}")
+                ctx['path'] = 'simple'
 
-                tool_calls_log.append({
-                    "tool": fname,
-                    "args": fargs,
-                    "result": result,
-                })
-            continue
+        elif step_type == 'reply':
+            # Only run if path matches
+            if step.get('config', {}).get('for_path', '') and step['config']['for_path'] != ctx['path']:
+                continue
+            try:
+                ctx['reply'], ctx['tool_calls_log'] = _execute_reply_step(step, messages, session)
+            except Exception as e:
+                logger.error(f"Reply step failed: {e}")
+                ctx['reply'] = "Sorry, I encountered an error processing your request."
+            break  # reply step produces final output
 
-        reply = msg.content or "(no response)"
+        elif step_type == 'plan':
+            if step.get('config', {}).get('for_path', '') and step['config']['for_path'] != ctx['path']:
+                continue
+            try:
+                ctx['plan'] = _execute_plan_step(step, text, ctx['intent'], role, session)
+                logger.info(f"Pipeline: planned {len(ctx['plan'])} tool calls")
+            except Exception as e:
+                logger.error(f"Planning failed: {e}, falling back to simple")
+                # Find the reply step and use it
+                for fallback in active_steps:
+                    if fallback['step_type'] == 'reply':
+                        try:
+                            ctx['reply'], ctx['tool_calls_log'] = _execute_reply_step(fallback, messages, session)
+                        except Exception as e2:
+                            logger.error(f"Fallback reply step also failed: {e2}")
+                            ctx['reply'] = "Sorry, I encountered an error processing your request."
+                        break
+                break
 
-        # Build rich response
-        blocks = _build_response(reply, tool_calls_log, session['employee_id'], session['role'])
+        elif step_type == 'tool_call':
+            if step.get('config', {}).get('for_path', '') and step['config']['for_path'] != ctx['path']:
+                continue
+            try:
+                if ctx['plan']:
+                    ctx['tool_calls_log'] = _execute_tool_call_step(step, ctx['plan'], session['employee_id'], role)
+            except Exception as e:
+                logger.error(f"Tool call step failed: {e}")
 
-        logger.info(f"Tokens used: {total_tokens}")
+        elif step_type == 'generate':
+            if step.get('config', {}).get('for_path', '') and step['config']['for_path'] != ctx['path']:
+                continue
+            try:
+                ctx['reply'] = _execute_generate_step(step, text, ctx['tool_calls_log'], session)
+            except Exception as e:
+                logger.error(f"Generate step failed: {e}")
+                ctx['reply'] = "Sorry, I encountered an error generating a response."
 
-        session['conversation'].append({"role": "assistant", "content": reply})
-        if len(session['conversation']) > 40:
-            # Keep first 2 messages (system context) + last 30
-            # But always keep messages that contain tool results
-            keep = []
-            for msg in session['conversation'][:-30]:
-                if isinstance(msg, dict) and msg.get('role') == 'tool':
-                    keep.append(msg)
-            session['conversation'] = keep + session['conversation'][-30:]
-        return reply, blocks
+        elif step_type == 'validate':
+            if step.get('config', {}).get('for_path', '') and step['config']['for_path'] != ctx['path']:
+                continue
+            if ctx['reply']:
+                max_retries = step.get('config', {}).get('max_retries', 1)
+                for _ in range(max_retries):
+                    try:
+                        approved, feedback = _execute_validate_step(step, text, ctx['tool_calls_log'], ctx['reply'])
+                        if approved:
+                            break
+                        # Find generate step and regenerate
+                        for gen_step in active_steps:
+                            if gen_step['step_type'] == 'generate':
+                                if gen_step.get('config', {}).get('for_path', '') and gen_step['config']['for_path'] != ctx['path']:
+                                    continue
+                                try:
+                                    ctx['reply'] = _execute_generate_step(gen_step, text, ctx['tool_calls_log'], session, feedback=feedback)
+                                except Exception as e:
+                                    logger.error(f"Regenerate after validation failed: {e}")
+                                break
+                    except Exception as e:
+                        logger.error(f"Validate step failed: {e}")
+                        break
 
-    return "Too many tool rounds. Try rephrasing.", None
+    reply = ctx['reply']
+    if reply is None:
+        reply = "Sorry, I couldn't process your request."
+
+    blocks = _build_response(reply, ctx['tool_calls_log'], session['employee_id'], role)
+
+    session['conversation'].append({"role": "assistant", "content": reply})
+    if len(session['conversation']) > 40:
+        keep = [m for m in session['conversation'][:-30] if isinstance(m, dict) and m.get('role') == 'tool']
+        session['conversation'] = keep + session['conversation'][-30:]
+
+    return reply, blocks
 
 
 # ── Slash Commands ──
