@@ -1,5 +1,4 @@
 from django.core.management.base import BaseCommand
-
 from bot.models import Bot, LLMProvider, Pipeline, PipelineStep, Prompt
 
 
@@ -17,7 +16,6 @@ IMPORTANT RULES:
 - Be concise and helpful.
 - Generate idempotency_key as {emp_id}_action_{today}_xxxx."""
 
-
 MANAGER_PROMPT = """You are Gamyam's HRMS leave management assistant for managers.
 Talking to: {name} ({emp_id}), {designation} in {dept}.
 Today: {today}. Leave year: {leave_year} (April {leave_year} - March next year).
@@ -31,7 +29,6 @@ IMPORTANT RULES:
 - Show details before approving. Require reason for rejections.
 - Use leave type CODES: SL, PL, EL, LOP, WFH, BL, ML, PtL, OH.
 - Generate idempotency_key as MGR_{emp_id}_action_{today}_xxxx."""
-
 
 ADMIN_PROMPT = """You are Gamyam's HRMS leave management assistant for HR administrators.
 Talking to: {name} ({emp_id}), HR Admin.
@@ -53,130 +50,85 @@ IMPORTANT RULES:
 
 
 class Command(BaseCommand):
-    help = 'Seed default bot configuration data (LLM providers, bot, prompts, pipeline)'
+    help = 'Seed default bot configuration'
 
     def handle(self, *args, **options):
-        self.stdout.write('Seeding bot configuration...')
-
-        # --- LLM Providers ---
-        gpt4o, created = LLMProvider.objects.get_or_create(
+        # LLM Providers
+        gpt4o, c = LLMProvider.objects.get_or_create(
             model_id='gpt-4o',
-            defaults={
-                'name': 'GPT-4o',
-                'provider_type': 'openai',
-                'api_url': '',
-                'is_active': True,
-                'description': 'OpenAI GPT-4o model',
-            },
-        )
-        action = 'Created' if created else 'Already exists'
-        self.stdout.write(f'  {action}: LLMProvider "GPT-4o"')
+            defaults={'name': 'GPT-4o', 'provider_type': 'openai', 'is_active': True,
+                      'description': 'OpenAI GPT-4o'})
+        self.stdout.write(f"  {'Created' if c else 'Exists'}: LLMProvider GPT-4o")
 
-        xlam, created = LLMProvider.objects.get_or_create(
+        xlam, c = LLMProvider.objects.get_or_create(
             model_id='xlam',
-            defaults={
-                'name': 'xLAM-2-1B',
-                'provider_type': 'local',
-                'api_url': 'http://host.docker.internal:8081/v1',
-                'is_active': False,
-                'description': 'Local xLAM-2-1B model for tool calling',
-            },
-        )
-        action = 'Created' if created else 'Already exists'
-        self.stdout.write(f'  {action}: LLMProvider "xLAM-2-1B"')
+            defaults={'name': 'xLAM-2-1B', 'provider_type': 'local', 'is_active': False,
+                      'api_url': 'http://host.docker.internal:8081/v1',
+                      'description': 'Local xLAM for tool calling'})
+        self.stdout.write(f"  {'Created' if c else 'Exists'}: LLMProvider xLAM-2-1B")
 
-        gemma, created = LLMProvider.objects.get_or_create(
+        gemma, c = LLMProvider.objects.get_or_create(
             model_id='gemma',
-            defaults={
-                'name': 'Gemma-3-1B',
-                'provider_type': 'local',
-                'api_url': 'http://host.docker.internal:8082/v1',
-                'is_active': False,
-                'description': 'Local Gemma-3-1B model for reply generation',
-            },
-        )
-        action = 'Created' if created else 'Already exists'
-        self.stdout.write(f'  {action}: LLMProvider "Gemma-3-1B"')
+            defaults={'name': 'Gemma-3-1B', 'provider_type': 'local', 'is_active': False,
+                      'api_url': 'http://host.docker.internal:8082/v1',
+                      'description': 'Local Gemma for replies'})
+        self.stdout.write(f"  {'Created' if c else 'Exists'}: LLMProvider Gemma-3-1B")
 
-        # --- Bot ---
-        bot, created = Bot.objects.get_or_create(
+        # Prompts
+        emp_prompt, c = Prompt.objects.get_or_create(
+            name='Employee System Prompt',
+            defaults={'template': EMPLOYEE_PROMPT, 'is_active': True,
+                      'description': 'System prompt for employee role'})
+        self.stdout.write(f"  {'Created' if c else 'Exists'}: Prompt Employee")
+
+        mgr_prompt, c = Prompt.objects.get_or_create(
+            name='Manager System Prompt',
+            defaults={'template': MANAGER_PROMPT, 'is_active': True,
+                      'description': 'System prompt for manager role'})
+        self.stdout.write(f"  {'Created' if c else 'Exists'}: Prompt Manager")
+
+        admin_prompt, c = Prompt.objects.get_or_create(
+            name='Admin System Prompt',
+            defaults={'template': ADMIN_PROMPT, 'is_active': True,
+                      'description': 'System prompt for HR admin role'})
+        self.stdout.write(f"  {'Created' if c else 'Exists'}: Prompt Admin")
+
+        # Pipeline
+        pipeline, c = Pipeline.objects.get_or_create(
+            name='Default GPT-4o Pipeline',
+            defaults={'is_active': True,
+                      'description': 'GPT-4o handles system prompt, tool calls, and reply in one flow.'})
+        self.stdout.write(f"  {'Created' if c else 'Exists'}: Pipeline")
+
+        # Pipeline Steps
+        # Step 0: System prompts per role
+        PipelineStep.objects.get_or_create(
+            pipeline=pipeline, order=0, role_filter='EMPLOYEE',
+            defaults={'name': 'Employee System Prompt', 'step_type': 'system_prompt',
+                      'prompt': emp_prompt, 'is_active': True})
+        PipelineStep.objects.get_or_create(
+            pipeline=pipeline, order=1, role_filter='MANAGER',
+            defaults={'name': 'Manager System Prompt', 'step_type': 'system_prompt',
+                      'prompt': mgr_prompt, 'is_active': True})
+        PipelineStep.objects.get_or_create(
+            pipeline=pipeline, order=2, role_filter='ADMIN',
+            defaults={'name': 'Admin System Prompt', 'step_type': 'system_prompt',
+                      'prompt': admin_prompt, 'is_active': True})
+        self.stdout.write(f"  Created/Exists: 3 System Prompt steps")
+
+        # Step 3: Tool calling + reply (GPT-4o does both)
+        PipelineStep.objects.get_or_create(
+            pipeline=pipeline, order=10,
+            defaults={'name': 'GPT-4o Tool Call + Reply', 'step_type': 'tool_call',
+                      'llm_provider': gpt4o, 'is_active': True,
+                      'config': {'tool_choice': 'auto', 'max_rounds': 10}})
+        self.stdout.write(f"  Created/Exists: Tool Call step")
+
+        # Bot
+        Bot.objects.get_or_create(
             name='HRMS Slack Bot',
-            defaults={
-                'connector_type': 'slack',
-                'status': 'active',
-                'llm_provider': gpt4o,
-                'description': 'Main HRMS leave management Slack bot',
-                'config': {},
-            },
-        )
-        action = 'Created' if created else 'Already exists'
-        self.stdout.write(f'  {action}: Bot "HRMS Slack Bot"')
+            defaults={'connector_type': 'slack', 'status': 'active', 'pipeline': pipeline,
+                      'description': 'Main HRMS leave management Slack bot'})
+        self.stdout.write(f"  Created/Exists: Bot")
 
-        # --- Prompts ---
-        prompts_data = [
-            {
-                'name': 'Employee System Prompt',
-                'role': 'EMPLOYEE',
-                'template': EMPLOYEE_PROMPT,
-                'description': 'System prompt for employees interacting with the HRMS bot.',
-            },
-            {
-                'name': 'Manager System Prompt',
-                'role': 'MANAGER',
-                'template': MANAGER_PROMPT,
-                'description': 'System prompt for managers interacting with the HRMS bot.',
-            },
-            {
-                'name': 'Admin System Prompt',
-                'role': 'ADMIN',
-                'template': ADMIN_PROMPT,
-                'description': 'System prompt for HR administrators interacting with the HRMS bot.',
-            },
-        ]
-
-        for prompt_data in prompts_data:
-            prompt, created = Prompt.objects.get_or_create(
-                name=prompt_data['name'],
-                defaults={
-                    'role': prompt_data['role'],
-                    'template': prompt_data['template'],
-                    'is_active': True,
-                    'version': 1,
-                    'description': prompt_data['description'],
-                },
-            )
-            action = 'Created' if created else 'Already exists'
-            self.stdout.write(f'  {action}: Prompt "{prompt_data["name"]}"')
-
-        # --- Pipeline ---
-        pipeline, created = Pipeline.objects.get_or_create(
-            bot=bot,
-            name='Default Pipeline',
-            defaults={
-                'is_active': True,
-                'description': 'Default single-step pipeline using GPT-4o for tool calling and reply.',
-            },
-        )
-        action = 'Created' if created else 'Already exists'
-        self.stdout.write(f'  {action}: Pipeline "Default Pipeline"')
-
-        # --- Pipeline Step ---
-        step, created = PipelineStep.objects.get_or_create(
-            pipeline=pipeline,
-            order=1,
-            defaults={
-                'name': 'Unified GPT-4o',
-                'step_type': 'tool_call',
-                'llm_provider': gpt4o,
-                'prompt_override': '',
-                'config': {
-                    'tool_choice': 'auto',
-                    'max_rounds': 10,
-                },
-                'is_active': True,
-            },
-        )
-        action = 'Created' if created else 'Already exists'
-        self.stdout.write(f'  {action}: PipelineStep "Unified GPT-4o"')
-
-        self.stdout.write(self.style.SUCCESS('Bot configuration seeded successfully!'))
+        self.stdout.write(self.style.SUCCESS('Bot config seeded!'))
