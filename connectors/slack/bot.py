@@ -309,14 +309,13 @@ def _format_balance_blocks(text_reply, tool_results):
             # Handle team balance (has employee info) or personal balance
             emp_name = bal.get("employee_name", bal.get("employee_code", ""))
             leave_type = bal.get("leave_type_name", bal.get("leave_type_code", ""))
-            total = bal.get("entitled", bal.get("total", "N/A"))
-            used = bal.get("used", "N/A")
             available = bal.get("available", "N/A")
+            used = bal.get("used", "0")
 
             line_parts = []
             if emp_name:
                 line_parts.append(f"*{emp_name}*")
-            line_parts.append(f"`{leave_type}`  Total: `{total}` | Used: `{used}` | Available: `{available}`")
+            line_parts.append(f"`{leave_type}`  Available: *{available}* days | Used: {used}")
             text = "  ".join(line_parts) if line_parts else str(bal)
 
             blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": text}})
@@ -545,8 +544,10 @@ def _build_response(text_reply, tool_calls_log, employee_id, role):
                 if isinstance(result, dict) and result.get("valid", result.get("is_valid", False)):
                     return _format_leave_confirm_blocks(text_reply, tool_calls_log, employee_id, role)
 
-    # Check for balance queries
-    if "get_my_balance" in tool_names or "get_team_balance" in tool_names:
+    # Check for balance queries — only show table if balance was the primary query
+    # (i.e., last tool called, not just a step in apply_leave flow)
+    last_tool = tool_names[-1] if tool_names else ''
+    if last_tool in ("get_my_balance", "get_team_balance"):
         return _format_balance_blocks(text_reply, tool_calls_log)
 
     # Check for successful apply_leave
