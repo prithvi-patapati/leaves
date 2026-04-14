@@ -14,3 +14,13 @@ def set_fallback(actor, employee_id, primary_manager_id, fallback_manager_id,
         reason=reason,
         created_by=actor,
     )
+
+
+def get_fallback_managers(employee_id=None, active_only=True):
+    qs = FallbackManager.objects.select_related('employee', 'primary_manager', 'fallback_manager')
+    if employee_id:
+        emp = Employee.objects.get(employee_id=employee_id)
+        qs = qs.filter(employee=emp)
+    if active_only:
+        qs = qs.filter(is_active=True)
+    return qs.order_by('-created_at')

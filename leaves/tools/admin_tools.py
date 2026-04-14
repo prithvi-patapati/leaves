@@ -137,6 +137,18 @@ ADMIN_TOOLS = [
         "handler": "leaves.services.batch_manager.rollback_batch"
     },
     {
+        "name": "get_fallback_managers",
+        "description": "View fallback manager assignments for an employee. Shows who will handle approvals when the primary manager is absent.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "employee_id": {"type": "string", "description": "Employee ID to check fallback for. Leave empty to see all."},
+                "active_only": {"type": "boolean"}
+            }
+        },
+        "handler": "leaves.services.fallback_service.get_fallback_managers"
+    },
+    {
         "name": "set_fallback_manager",
         "description": "Set a backup approver for when a manager is on leave. employee_id is the employee whose requests need an approver. primary_manager_id is their normal manager. fallback_manager_id is the backup. effective_from/to define the date range.",
         "input_schema": {
