@@ -76,7 +76,13 @@ def validate_retroactive_policy(employee, leave_type, request_data, config):
 
 
 def validate_balance_sufficient(employee, leave_type, request_data, config):
-    if leave_type.credit_method in ('ON_DEMAND', 'EVENT'):
+    # EVENT-based leaves (maternity, bereavement) have no balance limit
+    if leave_type.credit_method == 'EVENT':
+        return True, None
+
+    # ON_DEMAND: only LOP skips balance check (unlimited, deducted from salary)
+    # All other ON_DEMAND types still need a balance record with available days
+    if leave_type.credit_method == 'ON_DEMAND' and leave_type.code == 'LOP':
         return True, None
 
     from leaves.models import LeaveBalance
@@ -90,7 +96,7 @@ def validate_balance_sufficient(employee, leave_type, request_data, config):
         if balance.available < request_data['duration']:
             return False, f"Insufficient balance. Available: {balance.available}, requested: {request_data['duration']}."
     except LeaveBalance.DoesNotExist:
-        return False, f"No balance found for {leave_type.code} in year {year}."
+        return False, f"No balance found for {leave_type.code} in year {year}. Please contact HR."
     return True, None
 
 

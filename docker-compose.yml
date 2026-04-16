@@ -72,13 +72,12 @@ services:
     build:
       context: ./connectors/slack
       dockerfile: Dockerfile
+    network_mode: host
     environment:
-      - HRMS_API_URL=http://api:8000
+      - HRMS_API_URL=http://localhost:8000
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
       - SLACK_APP_TOKEN=${SLACK_APP_TOKEN}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-    depends_on:
-      - api
     restart: unless-stopped
 
 volumes:
